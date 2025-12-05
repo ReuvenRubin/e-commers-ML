@@ -1,0 +1,28 @@
+# Git Commands to Run Manually
+# פקודות Git להרצה ידנית
+
+# Step 1: Navigate to project directory
+cd C:\Users\Reuven\Desktop\ML
+
+# Step 2: Initialize Git repository (if not already done)
+git init
+
+# Step 3: Add all files
+git add .
+
+# Step 4: Create initial commit
+git commit -m "Initial commit: E-Commerce ML Recommendation System with optimized user categorization (58.8% Silhouette Score)"
+
+# Step 5: Add remote repository
+git remote add origin https://github.com/ReuvenRubin/e-commers-ML.git
+
+# Step 6: Set branch to main
+git branch -M main
+
+# Step 7: Push to GitHub
+git push -u origin main
+
+# If you get an error about unrelated histories, run:
+# git pull origin main --allow-unrelated-histories
+# git push -u origin main
+
