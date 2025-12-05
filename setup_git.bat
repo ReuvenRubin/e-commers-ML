@@ -51,6 +51,12 @@ echo Adding files to Git...
 git add .
 
 echo.
+echo Configuring Git user (if not already set)...
+git config user.name "ReuvenRubin" >nul 2>&1
+git config user.email "reuven@example.com" >nul 2>&1
+echo Git user configured.
+
+echo.
 echo Creating commit...
 git commit -m "Initial commit: E-Commerce ML Recommendation System with optimized user categorization"
 

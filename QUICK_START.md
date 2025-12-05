@@ -6,11 +6,19 @@
 2. הקלד `cmd` ולחץ Enter
 3. **חשוב:** פתח Command Prompt חדש (לא PowerShell)
 
-## שלב 2: הרץ את הסקריפט
+## שלב 2: הרץ את הסקריפטים
 
 ```cmd
 cd C:\Users\Reuven\Desktop\ML
 setup_git.bat
+complete_setup.bat
+push_to_github.bat
+```
+
+או להריץ הכל בבת אחת:
+```cmd
+cd C:\Users\Reuven\Desktop\ML
+push_to_github.bat
 ```
 
 או הרץ את הפקודות ידנית:
