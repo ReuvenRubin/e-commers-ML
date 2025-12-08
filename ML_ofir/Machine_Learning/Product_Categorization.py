@@ -10,7 +10,7 @@ from sklearn.metrics import classification_report, accuracy_score
 
 # Load data - resolve path relative to this script
 script_dir = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(script_dir, '..', 'datasets', 'products_10000.csv')
+csv_path = os.path.join(script_dir, '..', '..', 'datasets', 'raw', 'products_10000.csv')
 df = pd.read_csv(csv_path)
 
 # ============================================================================
@@ -166,9 +166,15 @@ except ValueError as e:
 print(f"\nTraining set: {len(X_train)} products")
 print(f"Test set: {len(X_test)} products")
 print(f"\nTraining set categories distribution:")
-print(y_train.value_counts())
+train_counts = y_train.value_counts()
+for cat, count in train_counts.items():
+    percentage = (count / len(y_train)) * 100
+    print(f"  {cat}: {count} products ({percentage:.1f}%)")
 print(f"\nTest set categories distribution:")
-print(y_test.value_counts())
+test_counts = y_test.value_counts()
+for cat, count in test_counts.items():
+    percentage = (count / len(y_test)) * 100
+    print(f"  {cat}: {count} products ({percentage:.1f}%)")
 
 # Separate text and price again for easier use
 X_train_text = X_train['text']
@@ -264,7 +270,7 @@ y_pred = model.predict(X_test_combined)
 
 # Calculate accuracy for combined category
 accuracy_combined = accuracy_score(y_test, y_pred)
-print(f"\nCombined Category Accuracy (main - sub): {accuracy_combined:.4f}")
+print(f"\nCombined Category Accuracy (main - sub): {accuracy_combined:.4f} ({accuracy_combined*100:.2f}%)")
 
 # Split predictions back to main and sub categories for separate evaluation
 # Use || as separator (same as when combining)
@@ -275,11 +281,11 @@ y_pred_sub = pd.Series(y_pred).str.split(' || ').str[1]
 
 # Calculate accuracy for main category only
 accuracy_main = accuracy_score(y_test_main, y_pred_main)
-print(f"Main Category Accuracy: {accuracy_main:.4f}")
+print(f"Main Category Accuracy: {accuracy_main:.4f} ({accuracy_main*100:.2f}%)")
 
 # Calculate accuracy for sub category only
 accuracy_sub = accuracy_score(y_test_sub, y_pred_sub)
-print(f"Sub Category Accuracy: {accuracy_sub:.4f}")
+print(f"Sub Category Accuracy: {accuracy_sub:.4f} ({accuracy_sub*100:.2f}%)")
 
 print("\n" + "="*50)
 print("Combined Category Classification Report:")

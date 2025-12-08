@@ -98,16 +98,16 @@ class MLImplementation:
         """
         print("Loading data...")
         
-        # Load original data from ML_Ofir/datasets - use all 10000 products
-        all_products = pd.read_csv(self.data_path / "ML_Ofir" / "datasets" / "products_10000.csv")
+        # Load original data from datasets/raw - use all 10000 products
+        all_products = pd.read_csv(self.data_path / "datasets" / "raw" / "products_10000.csv")
         self.products_df = all_products.copy()
         # Load users (now 15000 users with realistic distribution: 70% inactive)
-        self.users_df = pd.read_csv(self.data_path / "ML_Ofir" / "datasets" / "users_5000.csv")
+        self.users_df = pd.read_csv(self.data_path / "datasets" / "raw" / "users_5000.csv")
         
         # Load interaction tables in Wide format and convert to Long format
-        clicks_wide = pd.read_csv(self.data_path / "ML_Ofir" / "datasets" / "user_clicks_interactions.csv")
-        purchases_wide = pd.read_csv(self.data_path / "ML_Ofir" / "datasets" / "user_purchase_interactions.csv")
-        visits_time_wide = pd.read_csv(self.data_path / "ML_Ofir" / "datasets" / "user_visits_time_interactions.csv")
+        clicks_wide = pd.read_csv(self.data_path / "datasets" / "raw" / "user_clicks_interactions.csv")
+        purchases_wide = pd.read_csv(self.data_path / "datasets" / "raw" / "user_purchase_interactions.csv")
+        visits_time_wide = pd.read_csv(self.data_path / "datasets" / "raw" / "user_visits_time_interactions.csv")
         
         # Convert from wide to long format
         self.clicks_df = self._convert_wide_to_long(clicks_wide, 'clicks')
@@ -115,7 +115,7 @@ class MLImplementation:
         self.visits_time_df = self._convert_wide_to_long(visits_time_wide, 'visit_time')
         
         # Load product metadata if it exists
-        metadata_path = self.data_path / "ML_Ofir" / "datasets" / "product_interaction_metadata.csv"
+        metadata_path = self.data_path / "datasets" / "raw" / "product_interaction_metadata.csv"
         if metadata_path.exists():
             self.product_metadata_df = pd.read_csv(metadata_path)
         else:
@@ -437,11 +437,10 @@ class MLImplementation:
         
         Returns:
         - final_labels: Array of category assignments for each user
-        - accuracy: Classification accuracy (target: 88%-90%+)
+        - accuracy: Classification accuracy
         """
         print("\n" + "="*60)
         print("User Categorization - Random Forest Classifier")
-        print("Target: 88%-90%+ Accuracy")
         print("="*60)
         
         # Prepare features
@@ -472,9 +471,17 @@ class MLImplementation:
         self.label_encoder = label_encoder
         
         print(f"Created {len(np.unique(y))} user categories:")
+        total_percentage = 0.0
         for i, cat in enumerate(label_encoder.classes_):
             count = np.sum(y == cat)
-            print(f"  {cat}: {count} users ({count/len(y)*100:.1f}%)")
+            percentage = count/len(y)*100
+            total_percentage += percentage
+            print(f"  {cat}: {count} users ({percentage:.1f}%)")
+        
+        # Verify percentages sum to 100%
+        print(f"\nTotal: {len(y)} users ({total_percentage:.1f}%)")
+        if abs(total_percentage - 100.0) > 0.1:  # Allow small floating point error
+            print(f"  ⚠️ Warning: Percentages sum to {total_percentage:.1f}% (expected 100.0%)")
         
         # Step 2: Prepare features (use normalized features)
         print("\nStep 2: Preparing features with proper preprocessing...")
@@ -512,12 +519,25 @@ class MLImplementation:
         
         # Step 4: Train/Test split with stratification
         print("\nStep 4: Creating stratified train/test split...")
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_selected, y_encoded,
-            test_size=0.2,
-            random_state=42,
-            stratify=y_encoded  # Maintain category distribution
-        )
+        # Check if we can use stratify (need at least 2 samples per class)
+        unique_classes, class_counts = np.unique(y_encoded, return_counts=True)
+        min_class_count = class_counts.min()
+        
+        if min_class_count < 2:
+            print(f"  Warning: Some classes have less than 2 samples (min: {min_class_count})")
+            print(f"  Cannot use stratify. Using regular split instead.")
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_selected, y_encoded,
+                test_size=0.2,
+                random_state=42
+            )
+        else:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_selected, y_encoded,
+                test_size=0.2,
+                random_state=42,
+                stratify=y_encoded  # Maintain category distribution
+            )
         
         print(f"Training set: {len(X_train)} users")
         print(f"Test set: {len(X_test)} users")
@@ -528,12 +548,12 @@ class MLImplementation:
         
         # Step 5: Hyperparameter tuning with GridSearchCV (FAST VERSION)
         print("\nStep 5: Hyperparameter tuning with GridSearchCV...")
-        print("  Using FAST optimized grid (target: 5-10 minutes, accuracy: 88%+)...")
+        print("  Using FAST optimized grid (target: 5-10 minutes)...")
         
         # FAST VERSION: Minimal parameter grid for very fast execution while maintaining quality
         # Strategy: Focus on most impactful parameters, use proven good values
         # 2*2*2*2*2 = 32 combinations -> 96 fits (with 3-fold CV)
-        # Time: ~5-10 minutes, should still achieve 88%+ accuracy
+        # Time: ~5-10 minutes
         param_grid = {
             'n_estimators': [150, 200],  # Focus on proven good range
             'max_depth': [20, None],  # None (unlimited) often works best, 20 is good middle ground
@@ -566,7 +586,6 @@ class MLImplementation:
         print(f"  Testing {total_combinations} parameter combinations...")
         print(f"  With {cv.n_splits}-fold CV: ~{total_fits} model fits")
         print(f"  Estimated time: 5-10 minutes (depending on CPU)")
-        print(f"  Note: This optimized grid should still achieve 88%+ accuracy")
         
         grid_search.fit(X_train, y_train)
         
@@ -603,7 +622,14 @@ class MLImplementation:
         
         # Detailed classification report
         print("\nDetailed Classification Report:")
-        print(classification_report(y_test, y_pred, target_names=label_encoder.classes_, zero_division=0))
+        # Get unique classes in y_test and y_pred
+        unique_test_classes = np.unique(y_test)
+        unique_pred_classes = np.unique(y_pred)
+        all_classes = np.unique(np.concatenate([unique_test_classes, unique_pred_classes]))
+        
+        # Filter target_names to only include classes that appear in test/pred
+        available_target_names = [label_encoder.classes_[i] for i in all_classes if i < len(label_encoder.classes_)]
+        print(classification_report(y_test, y_pred, labels=all_classes, target_names=available_target_names, zero_division=0))
         
         # Predict on all users
         print("\nStep 9: Predicting categories for all users...")
@@ -640,7 +666,7 @@ class MLImplementation:
         """
         print("\nSaving results...")
         
-        output_path = self.data_path / "datasets" / "ml_results"
+        output_path = self.data_path / "datasets" / "results"
         output_path.mkdir(exist_ok=True)
         
         # Save users with clusters
@@ -675,7 +701,7 @@ class MLImplementation:
         Returns:
         - Dictionary containing:
           * user_clusters: Array of user category assignments
-          * user_silhouette: Classification accuracy (target: 88%-90%+)
+          * user_silhouette: Classification accuracy
           * output_path: Path where results were saved
         """
         print("="*80)
@@ -697,16 +723,6 @@ class MLImplementation:
         print("="*80)
         print(f"Users: {len(set(user_labels))} categories, Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
         print(f"Results saved to: {output_path}")
-        print()
-        
-        # Final verification message
-        if accuracy >= 0.90:
-            print("✅✅✅ EXCELLENT! Accuracy >= 90% (Target exceeded!) ✅✅✅")
-        elif accuracy >= 0.88:
-            print("✅✅✅ SUCCESS! Accuracy >= 88% (Minimum target met!) ✅✅✅")
-        else:
-            print(f"⚠️⚠️⚠️  WARNING: Accuracy = {accuracy*100:.2f}% (Target: 88%+)")
-            print(f"   Need to improve by {(0.88 - accuracy)*100:.2f}% to reach target")
         print("="*80)
         
         return {

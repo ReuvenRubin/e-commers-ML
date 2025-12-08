@@ -36,18 +36,21 @@ ML/
 │   └── visualizations.py
 │
 ├── datasets/
-│   ├── original/                           # נתונים מקוריים
-│   │   ├── products_5000.csv
+│   ├── raw/                                # נתונים מקוריים
+│   │   ├── products_10000.csv
 │   │   ├── users_5000.csv
-│   │   ├── user_clicks_interactions_long.csv
-│   │   ├── user_purchase_interactions_long.csv
-│   │   ├── user_visits_time_interactions_long.csv
-│   │   └── product_interaction_metadata_500.csv
-│   └── ml_results/                         # תוצאות ML
-│       ├── products_with_clusters.csv
-│       ├── users_with_clusters.csv
-│       ├── recommendation_evaluation.csv
-│       └── ...
+│   │   ├── user_clicks_interactions.csv
+│   │   ├── user_purchase_interactions.csv
+│   │   ├── user_visits_time_interactions.csv
+│   │   ├── product_interaction_metadata.csv
+│   │   └── ... (כל הקבצים המקוריים)
+│   ├── results/                            # תוצאות ML
+│   │   ├── users_with_clusters.csv
+│   │   ├── recommendation_evaluation.csv
+│   │   ├── clustering_summary.csv
+│   │   └── ...
+│   └── original/                           # קבצים נוספים
+│       └── hash_tables.json
 │
 ├── run_all_phases.py                       # הרצת כל השלבים
 ├── requirements.txt                        # רשימת ספריות
@@ -57,19 +60,27 @@ ML/
 ## שלבי הפרויקט
 
 ### Phase 1: Product and User Categorization
-**קבצים:** `src/phase1/ml_implementation.py`, `src/phase1/ml_with_train_test.py`
+
+**קבצים:**
+- `ML_ofir/Machine_Learning/Product_Categorization.py` - קטגוריזציה של מוצרים
+- `src/phase1/ml_implementation.py` - קטגוריזציה של משתמשים
+- `src/phase1/ml_with_train_test.py` - גרסה עם Train/Test Split
 
 **מה זה עושה:**
-- מחלק מוצרים לאשכולות (K-means) לפי תכונות (מחיר, כמות, צפיות, קטגוריה)
-- מחלק משתמשים לאשכולות (DBSCAN + K-means) לפי התנהגות (קליקים, רכישות, זמן ביקור)
-- שומר תוצאות: `products_with_clusters.csv`, `users_with_clusters.csv`
+- **Product Categorization:** מחלק מוצרים לקטגוריות (Logistic Regression) לפי שם, תיאור ומחיר
+- **User Categorization:** מחלק משתמשים לקטגוריות (Random Forest) לפי התנהגות (קליקים, רכישות, זמן ביקור)
+- שומר תוצאות: `users_with_clusters.csv` ב-`datasets/results/`
 
 **שימוש:**
 ```bash
-# גרסה רגילה (דרך run_all_phases.py)
+# דרך run_all_phases.py (מריץ הכל בסדר הנכון)
 py run_all_phases.py
 
 # או ישירות:
+# 1. Product Categorization
+py ML_ofir/Machine_Learning/Product_Categorization.py
+
+# 2. User Categorization
 cd src/phase1
 py ml_implementation.py
 
@@ -148,7 +159,7 @@ py run_all_phases.py
 py visualizations.py
 ```
 
-**תוצאות:** נשמרות ב-`datasets/ml_results/`:
+**תוצאות:** נשמרות ב-`datasets/results/`:
 - `product_clusters_analysis.png`
 - `user_clusters_analysis.png`
 - `recommendation_evaluation.png`
@@ -252,9 +263,8 @@ uid, product_id, clicks/purchases/visit_time
 
 ## תוצאות ML
 
-כל התוצאות נשמרות ב-`datasets/ml_results/`:
+כל התוצאות נשמרות ב-`datasets/results/`:
 
-- `products_with_clusters.csv` - מוצרים עם אשכולות
 - `users_with_clusters.csv` - משתמשים עם אשכולות
 - `products_train_with_clusters.csv` - מוצרים Train
 - `products_test_with_clusters.csv` - מוצרים Test
@@ -286,7 +296,7 @@ py -m pip install -r requirements.txt
 ```
 
 ### שגיאת "File not found"
-ודא שהנתונים נמצאים ב-`datasets/original/`
+ודא שהנתונים נמצאים ב-`datasets/raw/`
 
 ## רישיון
 

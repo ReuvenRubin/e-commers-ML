@@ -345,7 +345,7 @@ class NLPSearchSystem:
         evaluation_results = self.evaluate_search_methods()
         
         # שמירת תוצאות
-        output_path = self.data_path / "datasets" / "ml_results"
+        output_path = self.data_path / "datasets" / "results"
         
         # המרת תוצאות לפורמט JSON
         import json

@@ -469,7 +469,7 @@ class MLWithTrainTest:
         """
         שומר את התוצאות
         """
-        output_path = self.data_path / "datasets" / "ml_results"
+        output_path = self.data_path / "datasets" / "results"
         output_path.mkdir(exist_ok=True)
         
         # שמירת תוצאות מוצרים

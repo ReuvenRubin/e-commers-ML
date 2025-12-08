@@ -62,8 +62,8 @@ class RecommendationSystemWithTrainTest:
         self.product_metadata_df = pd.read_csv(self.data_path / "datasets/original/product_interaction_metadata_500.csv")
         
         # תוצאות קטגוריזציה
-        self.products_with_clusters = pd.read_csv(self.data_path / "datasets/ml_results/products_with_clusters.csv")
-        self.users_with_clusters = pd.read_csv(self.data_path / "datasets/ml_results/users_with_clusters.csv")
+        self.products_with_clusters = pd.read_csv(self.data_path / "datasets" / "results" / "products_with_clusters.csv")
+        self.users_with_clusters = pd.read_csv(self.data_path / "datasets" / "results" / "users_with_clusters.csv")
         
         print("Data loaded successfully!")
     
@@ -499,7 +499,7 @@ class RecommendationSystemWithTrainTest:
         evaluation_results = self.evaluate_on_test_set()
         
         # שמירת תוצאות
-        output_path = self.data_path / "datasets" / "ml_results"
+        output_path = self.data_path / "datasets" / "results"
         evaluation_df = pd.DataFrame(evaluation_results)
         evaluation_df.to_csv(output_path / "recommendation_evaluation_train_test.csv", index=False)
         
