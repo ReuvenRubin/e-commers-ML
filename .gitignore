@@ -36,9 +36,10 @@ env/
 .ipynb_checkpoints
 
 # Data files (large datasets)
-*.csv
-!requirements.txt
-datasets/**/*.csv
+# Note: CSV files in datasets/raw/ are included in the repository for full project setup
+# Exclude backup folders
+datasets/raw/backup/
+datasets/**/backup/
 
 # Results and outputs
 # Results are now in datasets/results/phase1/, phase2/, phase3/
