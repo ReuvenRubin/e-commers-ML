@@ -18,8 +18,8 @@ sns.set_style("whitegrid")
 class Visualizations:
     def __init__(self, data_path):
         self.data_path = Path(data_path)
-        self.output_path = self.data_path / "datasets" / "ml_results"
-        self.output_path.mkdir(exist_ok=True)
+        self.output_path = self.data_path / "datasets" / "results"
+        self.output_path.mkdir(parents=True, exist_ok=True)
     
     def visualize_product_clusters(self):
         """מציג גרף של אשכולות מוצרים"""

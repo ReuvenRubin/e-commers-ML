@@ -15,8 +15,8 @@
 ML/
 ├── src/                                    # קבצי הקוד הראשיים
 │   ├── phase1/                             # Phase 1: קטגוריזציה
-│   │   ├── ml_implementation.py
-│   │   └── ml_with_train_test.py
+│   │   ├── product_categorization.py
+│   │   └── user_categorization.py
 │   ├── phase2/                             # Phase 2: מערכת המלצות
 │   │   ├── recommendation_system_ml.py
 │   │   └── recommendation_system_ml_with_train_test.py
@@ -32,7 +32,6 @@ ML/
 │   └── test_performance_improvement.py
 │
 ├── scripts/                                # סקריפטים נוספים
-│   ├── ecommerce_analysis.py
 │   └── visualizations.py
 │
 ├── datasets/
@@ -44,11 +43,16 @@ ML/
 │   │   ├── user_visits_time_interactions.csv
 │   │   ├── product_interaction_metadata.csv
 │   │   └── ... (כל הקבצים המקוריים)
-│   ├── results/                            # תוצאות ML
-│   │   ├── users_with_clusters.csv
-│   │   ├── recommendation_evaluation.csv
-│   │   ├── clustering_summary.csv
-│   │   └── ...
+│   └── results/                            # תוצאות ML
+│       ├── phase1/                         # תוצאות Phase 1
+│       │   ├── products_with_categories.csv
+│       │   ├── users_with_clusters.csv
+│       │   ├── categorization_summary.csv
+│       │   └── ...
+│       ├── phase2/                         # תוצאות Phase 2
+│       │   └── recommendation_evaluation.csv
+│       └── phase3/                         # תוצאות Phase 3
+│           └── ...
 │   └── original/                           # קבצים נוספים
 │       └── hash_tables.json
 │
@@ -62,9 +66,8 @@ ML/
 ### Phase 1: Product and User Categorization
 
 **קבצים:**
-- `ML_ofir/Machine_Learning/Product_Categorization.py` - קטגוריזציה של מוצרים
-- `src/phase1/ml_implementation.py` - קטגוריזציה של משתמשים
-- `src/phase1/ml_with_train_test.py` - גרסה עם Train/Test Split
+- `src/phase1/product_categorization.py` - קטגוריזציה של מוצרים (Logistic Regression)
+- `src/phase1/user_categorization.py` - קטגוריזציה של משתמשים (Random Forest)
 
 **מה זה עושה:**
 - **Product Categorization:** מחלק מוצרים לקטגוריות (Logistic Regression) לפי שם, תיאור ומחיר
@@ -78,15 +81,12 @@ py run_all_phases.py
 
 # או ישירות:
 # 1. Product Categorization
-py ML_ofir/Machine_Learning/Product_Categorization.py
+cd src/phase1
+py product_categorization.py
 
 # 2. User Categorization
 cd src/phase1
-py ml_implementation.py
-
-# גרסה עם Train/Test Split
-cd src/phase1
-py ml_with_train_test.py
+py user_categorization.py
 ```
 
 ### Phase 2: Hybrid Recommendation System
@@ -166,19 +166,6 @@ py visualizations.py
 - `train_test_comparison.png`
 
 ## ניתוח נתונים
-
-**קובץ:** `ecommerce_analysis.py`
-
-ניתוח מקיף של הנתונים:
-- דפוסי התנהגות משתמשים
-- פופולריות מוצרים
-- שיעורי המרה
-- קטעי משתמשים
-
-**שימוש:**
-```bash
-py ecommerce_analysis.py
-```
 
 ## דרישות מערכת
 

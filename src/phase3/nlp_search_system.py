@@ -33,9 +33,13 @@ class NLPSearchSystem:
         print("טוען נתונים למערכת NLP...")
         
         # נתונים מקוריים - רק 500 מוצרים ראשונים
-        all_products = pd.read_csv(self.data_path / "datasets/original/products_5000.csv")
+        all_products = pd.read_csv(self.data_path / "datasets/raw/products_10000.csv")
         self.products_df = all_products.head(500).copy()
-        self.product_metadata_df = pd.read_csv(self.data_path / "datasets/original/product_interaction_metadata_500.csv")
+        metadata_path = self.data_path / "datasets/raw/product_interaction_metadata.csv"
+        if metadata_path.exists():
+            self.product_metadata_df = pd.read_csv(metadata_path)
+        else:
+            self.product_metadata_df = None
         
         print(f"נטענו {len(self.products_df)} מוצרים")
         
@@ -345,7 +349,8 @@ class NLPSearchSystem:
         evaluation_results = self.evaluate_search_methods()
         
         # שמירת תוצאות
-        output_path = self.data_path / "datasets" / "results"
+        output_path = self.data_path / "datasets" / "results" / "phase3"
+        output_path.mkdir(parents=True, exist_ok=True)
         
         # המרת תוצאות לפורמט JSON
         import json

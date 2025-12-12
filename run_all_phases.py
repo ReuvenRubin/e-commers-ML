@@ -21,15 +21,13 @@ def run_product_categorization():
     print("Starting Product Categorization")
     print("="*80)
     
-    # Run Product_Categorization.py
-    product_cat_path = project_root / "ML_ofir" / "Machine_Learning" / "Product_Categorization.py"
-    result = subprocess.run([sys.executable, str(product_cat_path)], cwd=str(project_root))
+    from product_categorization import ProductCategorization  # type: ignore
     
-    if result.returncode != 0:
-        raise RuntimeError("Product Categorization failed")
+    pc = ProductCategorization(str(project_root))
+    results = pc.run_product_categorization()
     
     print("\nProduct Categorization completed successfully!")
-    return True
+    return results
 
 def run_phase1():
     """Runs Phase 1: User Categorization"""
@@ -37,26 +35,12 @@ def run_phase1():
     print("Starting Phase 1: User Categorization")
     print("="*80)
     
-    from ml_implementation import MLImplementation  # type: ignore
+    from user_categorization import UserCategorization  # type: ignore
     
-    ml = MLImplementation(str(project_root))
-    results = ml.run_phase1()
+    uc = UserCategorization(str(project_root))
+    results = uc.run_phase1()
     
     print("\nPhase 1 completed successfully!")
-    return results
-
-def run_phase1_with_train_test():
-    """Runs Phase 1 with Train/Test Split"""
-    print("\n" + "="*80)
-    print("Starting Phase 1 with Train/Test Split")
-    print("="*80)
-    
-    from ml_with_train_test import MLWithTrainTest  # type: ignore
-    
-    ml_system = MLWithTrainTest(str(project_root))
-    results = ml_system.run_ml_pipeline()
-    
-    print("\nPhase 1 with Train/Test completed successfully!")
     return results
 
 def run_phase2():
@@ -107,13 +91,18 @@ def main():
     print("E-Commerce Recommendation System - Full Pipeline")
     print("="*80)
     
-    # Product Categorization (must run before Phase 1)
-    print("\nStep 1: Running Product Categorization...")
-    run_product_categorization()
+    # Phase 1: Product and User Categorization
+    print("\nStep 1: Running Phase 1 (Product Categorization)...")
+    product_results = run_product_categorization()
     
-    # Phase 1: User Categorization
     print("\nStep 2: Running Phase 1 (User Categorization)...")
-    phase1_results = run_phase1()
+    user_results = run_phase1()
+    
+    # Combine Phase 1 results
+    phase1_results = {
+        'product_categorization': product_results,
+        'user_categorization': user_results
+    }
     
     # Phase 2: Recommendation System (depends on Phase 1)
     print("\nStep 3: Running Phase 2 (Recommendation System)...")
@@ -134,7 +123,6 @@ def main():
     print("="*80)
     
     return {
-        'product_categorization': True,
         'phase1': phase1_results,
         'phase2': phase2_results
     }

@@ -51,19 +51,30 @@ class RecommendationSystemWithTrainTest:
         print("Loading data for recommendation system...")
         
         # נתונים מקוריים - רק 500 מוצרים ראשונים
-        products_all = pd.read_csv(self.data_path / "datasets/original/products_5000.csv")
+        products_all = pd.read_csv(self.data_path / "datasets/raw/products_10000.csv")
         self.products_df = products_all.head(500).copy()
-        self.users_df = pd.read_csv(self.data_path / "datasets/original/users_5000.csv")
+        self.users_df = pd.read_csv(self.data_path / "datasets/raw/users_5000.csv")
         
-        # טבלאות אינטראקציות - Long format
-        self.clicks_df = pd.read_csv(self.data_path / "datasets/original/user_clicks_interactions_long.csv")
-        self.purchases_df = pd.read_csv(self.data_path / "datasets/original/user_purchase_interactions_long.csv")
-        self.visits_time_df = pd.read_csv(self.data_path / "datasets/original/user_visits_time_interactions_long.csv")
-        self.product_metadata_df = pd.read_csv(self.data_path / "datasets/original/product_interaction_metadata_500.csv")
+        # טבלאות אינטראקציות - Wide format (נמיר ל-Long)
+        clicks_wide = pd.read_csv(self.data_path / "datasets/raw/user_clicks_interactions.csv")
+        purchases_wide = pd.read_csv(self.data_path / "datasets/raw/user_purchase_interactions.csv")
+        visits_time_wide = pd.read_csv(self.data_path / "datasets/raw/user_visits_time_interactions.csv")
+        
+        # המרה מ-Wide ל-Long format
+        self.clicks_df = self._convert_wide_to_long(clicks_wide, 'clicks')
+        self.purchases_df = self._convert_wide_to_long(purchases_wide, 'purchases')
+        self.visits_time_df = self._convert_wide_to_long(visits_time_wide, 'visit_time')
+        
+        # מטא-דאטה
+        metadata_path = self.data_path / "datasets/raw/product_interaction_metadata.csv"
+        if metadata_path.exists():
+            self.product_metadata_df = pd.read_csv(metadata_path)
+        else:
+            self.product_metadata_df = None
         
         # תוצאות קטגוריזציה
-        self.products_with_clusters = pd.read_csv(self.data_path / "datasets" / "results" / "products_with_clusters.csv")
-        self.users_with_clusters = pd.read_csv(self.data_path / "datasets" / "results" / "users_with_clusters.csv")
+        self.products_with_clusters = pd.read_csv(self.data_path / "datasets" / "results" / "phase1" / "products_with_categories.csv")
+        self.users_with_clusters = pd.read_csv(self.data_path / "datasets" / "results" / "phase1" / "users_with_clusters.csv")
         
         print("Data loaded successfully!")
     
@@ -99,6 +110,42 @@ class RecommendationSystemWithTrainTest:
         print(f"Clicks - Train: {len(self.clicks_train)}, Test: {len(self.clicks_test)}")
         print(f"Purchases - Train: {len(self.purchases_train)}, Test: {len(self.purchases_test)}")
         print(f"Visits Time - Train: {len(self.visits_time_train)}, Test: {len(self.visits_time_test)}")
+    
+    def _convert_wide_to_long(self, df, value_name):
+        """
+        Converts wide format interaction table to long format
+        
+        Parameters:
+        - df: DataFrame in wide format (uid, pid1, pid2, ..., pid10)
+        - value_name: Name for the value column (e.g., 'clicks', 'purchases', 'visit_time')
+        
+        Returns:
+        - DataFrame in long format (uid, product_id, value_name)
+        """
+        # Melt the dataframe: uid stays as identifier, pid columns become rows
+        long_df = df.melt(
+            id_vars=['uid'],
+            value_vars=[col for col in df.columns if col.startswith('pid')],
+            var_name='product_col',
+            value_name='product_id'
+        )
+        
+        # Remove rows with zero values (no interaction)
+        long_df = long_df[long_df['product_id'] > 0]
+        
+        # Create the interaction value column
+        if value_name in ['clicks', 'purchases']:
+            long_df[value_name] = 1
+        elif value_name == 'visit_time':
+            # For visit_time, generate realistic time values (10-300 seconds)
+            long_df[value_name] = (long_df['product_id'] % 290) + 10
+        else:
+            long_df[value_name] = 1
+        
+        # Select and rename columns
+        long_df = long_df[['uid', 'product_id', value_name]].copy()
+        
+        return long_df
     
     def prepare_tfidf_for_products(self):
         """
@@ -499,7 +546,8 @@ class RecommendationSystemWithTrainTest:
         evaluation_results = self.evaluate_on_test_set()
         
         # שמירת תוצאות
-        output_path = self.data_path / "datasets" / "results"
+        output_path = self.data_path / "datasets" / "results" / "phase2"
+        output_path.mkdir(parents=True, exist_ok=True)
         evaluation_df = pd.DataFrame(evaluation_results)
         evaluation_df.to_csv(output_path / "recommendation_evaluation_train_test.csv", index=False)
         

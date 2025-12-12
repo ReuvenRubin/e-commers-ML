@@ -1,5 +1,0 @@
-table_name,rows,columns,description
-user_clicks_interactions.csv,13,11,מספר הקלקות של משתמשים על מוצרים
-user_purchases_interactions.csv,13,11,מספר הרכישות של משתמשים עבור מוצרים
-user_visits_time_interactions.csv,13,11,זמן הביקור של משתמשים במוצרים
-user_product_metadata_interactions.csv,10,6,"מטא-דאטה של מוצרים (קטגוריות, פופולריות)"

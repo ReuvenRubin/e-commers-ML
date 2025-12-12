@@ -39,12 +39,9 @@ env/
 *.csv
 !requirements.txt
 datasets/**/*.csv
-ML_Ofir/**/*.csv
 
 # Results and outputs
-datasets/ml_results/*.png
-datasets/ml_results/*.json
-!datasets/ml_results/final_report.json
+# Results are now in datasets/results/phase1/, phase2/, phase3/
 
 # OS
 .DS_Store

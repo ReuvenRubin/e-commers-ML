@@ -191,8 +191,8 @@ def test_new_users_comparison():
     # Save results
     if len(results) > 0:
         results_df = pd.DataFrame(results)
-        output_path = data_path / "datasets" / "ml_results"
-        output_path.mkdir(exist_ok=True)
+        output_path = data_path / "datasets" / "results" / "phase2"
+        output_path.mkdir(parents=True, exist_ok=True)
         results_df.to_csv(output_path / "new_users_neural_comparison.csv", index=False)
         print(f"\nResults saved to: {output_path / 'new_users_neural_comparison.csv'}")
     else:
