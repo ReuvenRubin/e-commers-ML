@@ -14,11 +14,17 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
+# Import ProductCategorization from Phase 1
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from phase1.product_categorization import ProductCategorization
+
 # Neural Network imports (for ranking)
 try:
     import tensorflow as tf  # type: ignore
     from tensorflow import keras  # type: ignore
     from tensorflow.keras import layers  # type: ignore
+    from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint  # type: ignore
     NEURAL_NETWORK_AVAILABLE = True
 except (ImportError, Exception) as e:
     # מטפל גם ב-ImportError וגם בשגיאות אחרות (כמו DLL errors)
@@ -59,6 +65,15 @@ class RecommendationSystem:
         self.user_similarity_matrix = None
         self.neural_ranking_model = None  # Neural Network for ranking
         self.feature_scaler = None  # Scaler for normalizing features
+        
+        # ProductCategorization instance (from Phase 1) - reused for categorization and TF-IDF
+        self.product_categorizer = None
+        
+        # Cached data structures for efficient feature extraction
+        self._category_to_id = None  # Label encoding mapping for categories
+        self._product_dict = None  # Dictionary for fast product lookups
+        self._product_cluster_dict = None  # Dictionary for product clusters
+        self._user_cluster_dict = None  # Dictionary for user clusters
         
         # Continuous Learning - מעקב אחר אינטראקציות חדשות
         self.new_interactions = []  # רשימת אינטראקציות חדשות (לפני אימון מחדש)
@@ -124,102 +139,46 @@ class RecommendationSystem:
     
     def _categorize_products_using_logistic_regression(self):
         """
-        Categorizes products using Logistic Regression (from product_categorization.py logic)
+        Categorizes products using ProductCategorization class from Phase 1
         
-        This function implements the same logic as ProductCategorization class:
-        1. Combines product_name and description
-        2. Creates TF-IDF features (1000 features, ngrams 1-3)
-        3. Scales price feature
-        4. Trains Logistic Regression model
-        5. Predicts categories for all products
+        This function uses the ProductCategorization class directly instead of
+        duplicating the logic. This ensures consistency and maintainability.
+        The instance is stored for reuse (e.g., for TF-IDF matrix).
         
         Returns:
         - DataFrame with products and their predicted categories (ml_cluster column)
         """
-        print("  Categorizing products using Logistic Regression (product_categorization.py logic)...")
+        print("  Categorizing products using ProductCategorization class from Phase 1...")
         
-        # Copy products data
-        products = self.products_df.copy()
+        # Create and store ProductCategorization instance if not exists
+        if self.product_categorizer is None:
+            self.product_categorizer = ProductCategorization(str(self.data_path))
         
-        # Fill missing text fields
-        products['product_name'] = products['product_name'].fillna('')
-        products['description'] = products['description'].fillna('')
+        # Set the products_df to use our already loaded data
+        self.product_categorizer.products_df = self.products_df.copy()
         
-        # Remove completely empty products
-        initial_size = len(products)
-        products = products[~((products['product_name'].str.strip() == '') & 
-                            (products['description'].str.strip() == ''))]
-        if len(products) < initial_size:
-            print(f"  Removed {initial_size - len(products)} empty products")
+        # Clean data
+        self.product_categorizer.clean_data()
         
-        # Combine text features (like ProductCategorization class)
-        products['combined_text'] = products['product_name'] + ' ' + products['description']
+        # Train model
+        self.product_categorizer.train_model()
         
-        # Separate features and target
-        X_text = products['combined_text']
-        X_price = products['price'].values.reshape(-1, 1)
-        y = products['main_category']
+        # Categorize all products
+        products_with_categories = self.product_categorizer.categorize_all_products()
         
-        # TF-IDF (like ProductCategorization class)
-        tfidf = TfidfVectorizer(
-            max_features=1000,
-            ngram_range=(1, 3),
-            min_df=2,
-            max_df=0.90,
-            stop_words='english'
-        )
-        X_text_tfidf = tfidf.fit_transform(X_text).toarray()
-        
-        # Scale price feature
-        price_scaler = StandardScaler()
-        X_price_scaled = price_scaler.fit_transform(X_price)
-        
-        # Combine features
-        X_combined = np.hstack([X_text_tfidf, X_price_scaled])
-        
-        # Split data (like ProductCategorization class)
-        # Check if we can use stratify
-        category_counts = y.value_counts()
-        min_samples = category_counts.min()
-        use_stratify = min_samples >= 2
-        
-        if use_stratify:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_combined, y,
-                test_size=0.20,
-                random_state=21,
-                stratify=y
-            )
+        # Map to ml_cluster format (use predicted_main_category for consistency)
+        if 'predicted_main_category' in products_with_categories.columns:
+            products_with_categories['ml_cluster'] = products_with_categories['predicted_main_category']
+        elif 'predicted_category' in products_with_categories.columns:
+            # Extract main category from combined category if needed
+            products_with_categories['ml_cluster'] = products_with_categories['predicted_category'].str.split(' || ').str[0]
         else:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_combined, y,
-                test_size=0.20,
-                random_state=21
-            )
+            # Fallback to main_category if predictions not available
+            products_with_categories['ml_cluster'] = products_with_categories.get('main_category', 'Unknown')
         
-        # Train Logistic Regression model (like ProductCategorization class)
-        model = LogisticRegression(
-            max_iter=1000,
-            multi_class='auto',
-            n_jobs=-1
-        )
-        model.fit(X_train, y_train)
+        print(f"  Categorized {len(products_with_categories)} products into {products_with_categories['ml_cluster'].nunique()} categories")
         
-        # Evaluate
-        y_pred_test = model.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred_test)
-        print(f"  Product categorization accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
-        
-        # Predict categories for all products
-        y_pred_all = model.predict(X_combined)
-        
-        # Add predicted categories to products DataFrame
-        products['ml_cluster'] = y_pred_all
-        products['predicted_category'] = y_pred_all
-        
-        print(f"  Categorized {len(products)} products into {len(set(y_pred_all))} categories")
-        
-        return products
+        return products_with_categories
     
     def _verify_clustering_data(self):
         """
@@ -462,9 +421,10 @@ class RecommendationSystem:
         
     def prepare_tfidf_for_products(self):
         """
-        Prepares TF-IDF vectors for product descriptions
+        Prepares TF-IDF vectors for product descriptions using ProductCategorization from Phase 1
         
         What it does:
+        - Uses ProductCategorization.get_tfidf_matrix_for_descriptions() to create TF-IDF matrix
         - Converts product descriptions to TF-IDF vectors
         - Uses 100 most important words (max_features=100)
         - Removes common English stop words
@@ -474,7 +434,7 @@ class RecommendationSystem:
         - None (TF-IDF matrix stored in self.product_tfidf_matrix)
         
         Raises:
-        - ValueError: If products_df is not loaded
+        - ValueError: If products_df is not loaded or ProductCategorization not initialized
         """
         # Input validation
         if self.products_df is None:
@@ -483,28 +443,17 @@ class RecommendationSystem:
         if 'description' not in self.products_df.columns:
             raise ValueError("products_df must contain 'description' column")
         
-        print("Preparing TF-IDF for product descriptions...")
+        # Ensure ProductCategorization is initialized (should be done in _categorize_products_using_logistic_regression)
+        if self.product_categorizer is None:
+            # Initialize if not already done
+            self.product_categorizer = ProductCategorization(str(self.data_path))
+            self.product_categorizer.products_df = self.products_df.copy()
+            self.product_categorizer.clean_data()
         
-        # TF-IDF על תיאורי מוצרים
-        # שיפורים: ngram_range=(1,2) - גם מילים בודדות וגם צירופי 2 מילים
-        # min_df=2 - מילה חייבת להופיע לפחות ב-2 מוצרים (מסנן טעויות)
-        self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=100,
-            stop_words='english',
-            ngram_range=(1, 2),  # unigrams and bigrams
-            min_df=2,  # word must appear in at least 2 products
-            max_df=0.95  # word must not appear in more than 95% of products
-        )
+        print("Preparing TF-IDF for product descriptions using ProductCategorization...")
         
-        # Fill missing descriptions with empty string
-        descriptions = self.products_df['description'].fillna('')
-        
-        # Create TF-IDF matrix
-        self.product_tfidf_matrix = self.tfidf_vectorizer.fit_transform(descriptions)
-        
-        print(f"Created TF-IDF matrix: {self.product_tfidf_matrix.shape}")
-        print(f"  - {self.product_tfidf_matrix.shape[0]} products")
-        print(f"  - {self.product_tfidf_matrix.shape[1]} features (words/phrases)")
+        # Use ProductCategorization to get TF-IDF matrix for descriptions
+        self.product_tfidf_matrix, self.tfidf_vectorizer = self.product_categorizer.get_tfidf_matrix_for_descriptions(max_features=100)
         
     def create_user_interaction_matrix(self):
         """
@@ -547,23 +496,29 @@ class RecommendationSystem:
         # יצירת מטריצת אינטראקציות משוקללת
         interaction_matrix = np.zeros((num_users, num_products))
         
-        # מילוי מטריצה מקליקים
+        # מילוי מטריצה מקליקים (שימוש ב-dictionary mapping במקום .index() - יותר יעיל O(1) במקום O(n))
         for _, row in self.clicks_df.iterrows():
-            user_idx = all_user_ids.index(row['uid'])
-            product_idx = product_id_to_index[row['product_id']]
-            interaction_matrix[user_idx, product_idx] += row['clicks'] * 1.0
+            user_idx = self.user_id_to_index.get(row['uid'])
+            if user_idx is not None:  # בדיקה שהמשתמש קיים במיפוי
+                product_idx = product_id_to_index.get(row['product_id'])
+                if product_idx is not None:  # בדיקה שהמוצר קיים במיפוי
+                    interaction_matrix[user_idx, product_idx] += row['clicks'] * 1.0
         
         # מילוי מטריצה מרכישות
         for _, row in self.purchases_df.iterrows():
-            user_idx = all_user_ids.index(row['uid'])
-            product_idx = product_id_to_index[row['product_id']]
-            interaction_matrix[user_idx, product_idx] += row['purchases'] * 5.0
+            user_idx = self.user_id_to_index.get(row['uid'])
+            if user_idx is not None:
+                product_idx = product_id_to_index.get(row['product_id'])
+                if product_idx is not None:
+                    interaction_matrix[user_idx, product_idx] += row['purchases'] * 5.0
         
         # מילוי מטריצה מזמן ביקור
         for _, row in self.visits_time_df.iterrows():
-            user_idx = all_user_ids.index(row['uid'])
-            product_idx = product_id_to_index[row['product_id']]
-            interaction_matrix[user_idx, product_idx] += row['visit_time'] * 0.1
+            user_idx = self.user_id_to_index.get(row['uid'])
+            if user_idx is not None:
+                product_idx = product_id_to_index.get(row['product_id'])
+                if product_idx is not None:
+                    interaction_matrix[user_idx, product_idx] += row['visit_time'] * 0.1
         
         # המרה ל-DataFrame
         self.interaction_matrix = pd.DataFrame(
@@ -579,7 +534,9 @@ class RecommendationSystem:
         Calculates cosine similarity between users based on their interactions
         
         What it does:
+        - Converts DataFrame to numpy array for efficiency
         - Normalizes the interaction matrix using StandardScaler
+        - Handles users with no interactions (zero vectors) to avoid NaN
         - Calculates cosine similarity between all user pairs
         - Stores similarity matrix for collaborative filtering
         
@@ -588,14 +545,41 @@ class RecommendationSystem:
         """
         print("Calculating user similarity...")
         
-        # נרמול המטריצה
+        if self.interaction_matrix is None:
+            raise ValueError("Interaction matrix not created. Call create_user_interaction_matrix() first.")
+        
+        # המרת DataFrame ל-numpy array (יותר יעיל)
+        interaction_array = self.interaction_matrix.values
+        
+        # טיפול במשתמשים ללא אינטראקציות (וקטורי אפס)
+        # StandardScaler על וקטור אפס יוצר NaN, אז נטפל בזה
+        row_sums = np.sum(interaction_array, axis=1)
+        users_with_interactions = row_sums > 0
+        
+        if not np.any(users_with_interactions):
+            print("Warning: No users with interactions found. Cannot calculate similarity.")
+            self.user_similarity_matrix = np.eye(len(interaction_array))  # Identity matrix (no similarity)
+            return
+        
+        # נרמול המטריצה (רק למשתמשים עם אינטראקציות)
         scaler = StandardScaler()
-        normalized_matrix = scaler.fit_transform(self.interaction_matrix)
+        normalized_matrix = scaler.fit_transform(interaction_array)
+        
+        # החלפת NaN (אם יש) באפסים (למשתמשים ללא אינטראקציות)
+        normalized_matrix = np.nan_to_num(normalized_matrix, nan=0.0, posinf=0.0, neginf=0.0)
         
         # חישוב דמיון קוסינוס
+        # cosine_similarity מטפל אוטומטית בוקטורי אפס (מחזיר 0)
         self.user_similarity_matrix = cosine_similarity(normalized_matrix)
         
+        # החלפת NaN באפסים (אם יש משתמשים עם וקטורי אפס)
+        self.user_similarity_matrix = np.nan_to_num(self.user_similarity_matrix, nan=0.0, posinf=1.0, neginf=0.0)
+        
+        # אילוץ אלכסון ל-1 (כל משתמש דומה לעצמו ב-100%)
+        np.fill_diagonal(self.user_similarity_matrix, 1.0)
+        
         print(f"Created user similarity matrix: {self.user_similarity_matrix.shape}")
+        print(f"  - Similarity range: [{self.user_similarity_matrix.min():.3f}, {self.user_similarity_matrix.max():.3f}]")
     
     def update_interaction_dynamic(self, user_id, product_id, interaction_type='click', value=1):
         """
@@ -701,12 +685,24 @@ class RecommendationSystem:
         
         print("Recalculating user similarity matrix...")
         
+        # המרת DataFrame ל-numpy array (יותר יעיל)
+        interaction_array = self.interaction_matrix.values
+        
         # נרמול המטריצה (כמו ב-calculate_user_similarity)
         scaler = StandardScaler()
-        normalized_matrix = scaler.fit_transform(self.interaction_matrix)
+        normalized_matrix = scaler.fit_transform(interaction_array)
+        
+        # החלפת NaN (אם יש) באפסים
+        normalized_matrix = np.nan_to_num(normalized_matrix, nan=0.0, posinf=0.0, neginf=0.0)
         
         # חישוב דמיון קוסינוס מחדש
         self.user_similarity_matrix = cosine_similarity(normalized_matrix)
+        
+        # החלפת NaN באפסים (אם יש משתמשים עם וקטורי אפס)
+        self.user_similarity_matrix = np.nan_to_num(self.user_similarity_matrix, nan=0.0, posinf=1.0, neginf=0.0)
+        
+        # אילוץ אלכסון ל-1 (כל משתמש דומה לעצמו ב-100%)
+        np.fill_diagonal(self.user_similarity_matrix, 1.0)
         
         print(f"User similarity matrix recalculated: {self.user_similarity_matrix.shape}")
         print("Note: Recommendations will now use the updated similarity matrix.")
@@ -787,38 +783,36 @@ class RecommendationSystem:
     
     def prepare_neural_network_features(self, user_ids=None, product_ids=None, sample_size=10000):
         """
-        Prepares features for Neural Network ranking model
+        Prepares features for Neural Network ranking model (OPTIMIZED VERSION)
         
         What it does:
-        - Creates combined features from users and products:
-          * User features: cluster, total interactions, number of products interacted with
-          * Product features: cluster, price, category
-        - Creates labels: 1 if user interacted with product, 0 otherwise
-        - Returns features and labels for training
+        - Creates combined features from users and products efficiently
+        - Uses dictionaries for O(1) lookups instead of O(n) searches
+        - Implements smart sampling: more positive samples, fewer negative
+        - Uses stable label encoding instead of hash
         
-        Features (6 total):
-        1. user_cluster: User's cluster ID
-        2. product_cluster: Product's cluster ID
-        3. product_price: Product price
-        4. product_category: Product category (encoded as number)
-        5. total_interactions: User's total interactions
-        6. num_products: Number of unique products user interacted with
+        Features (17 total):
+        1-17: user_cluster, product_cluster, product_price, product_category, 
+              total_interactions, num_products, product_views, user_category, 
+              category_match, price_ratio, user_similarity, product_popularity,
+              total_purchases, product_purchase_rate, price_similarity,
+              user_engagement, category_popularity
         
         Parameters:
-        - user_ids: List of user IDs (if None, uses first 1000 users from matrix)
-        - product_ids: List of product IDs (if None, uses first 500 products from matrix)
-        - sample_size: Number of samples to create (for speed)
+        - user_ids: List of user IDs (if None, uses first 4000 users from matrix)
+        - product_ids: List of product IDs (if None, uses first 3000 products from matrix)
+        - sample_size: Number of samples to create (default: 10000)
         
         Returns:
         - tuple: (X_features, y_labels)
-          * X_features: Array of features (num_samples, 6)
+          * X_features: Array of features (num_samples, 17)
           * y_labels: Array of labels (1 = interaction, 0 = no interaction)
         """
         if not NEURAL_NETWORK_AVAILABLE:
             print("Error: TensorFlow not available. Cannot prepare neural network features.")
             return None, None
         
-        print("Preparing features for Neural Network ranking...")
+        print("Preparing features for Neural Network ranking (optimized)...")
         
         # בדיקה שהנתונים נטענו
         if self.interaction_matrix is None:
@@ -834,9 +828,7 @@ class RecommendationSystem:
             print("       Make sure Phase 1 has been run and users_with_clusters.csv exists.")
             return None, None
         
-        # בחירת משתמשים ומוצרים - הגדלנו את המספרים ליותר נתונים (יותר = יותר דיוק)
-        # שיפור ל-95%+ accuracy: יותר users ו-products, אבל עם הגבלה ל-scalability
-        # נשתמש ב-50% מהמשתמשים ו-30% מהמוצרים (scalable אבל מספיק נתונים)
+        # בחירת משתמשים ומוצרים
         max_users = min(4000, len(self.all_user_ids))
         max_products = min(3000, len(self.all_product_ids))
         
@@ -848,250 +840,324 @@ class RecommendationSystem:
         
         print(f"   Processing {len(user_ids)} users and {len(product_ids)} products...")
         
-        # סטטיסטיקות לבדיקת שימוש בקטגוריזציה
-        stats = {
-            'users_with_cluster': 0,
-            'users_without_cluster': 0,
-            'products_with_cluster': 0,
-            'products_without_cluster': 0,
-            'products_with_category': 0,
-            'products_without_category': 0
-        }
+        # ========== OPTIMIZATION 1: יצירת dictionaries מראש (O(1) access) ==========
+        # Product dictionary - גישה מהירה למוצרים (שמירה ב-class level לשימוש חוזר)
+        if self._product_dict is None:
+            self._product_dict = {}
+            if self.products_df is not None:
+                for _, row in self.products_df.iterrows():
+                    pid = row.get('id')
+                    if pd.notna(pid):
+                        self._product_dict[int(pid)] = row
+        product_dict = self._product_dict
         
-        # יצירת רשימת תכונות
-        features_list = []
-        labels_list = []
+        # Product cluster dictionary
+        if self._product_cluster_dict is None:
+            self._product_cluster_dict = {}
+            if self.products_with_clusters is not None and 'id' in self.products_with_clusters.columns:
+                for _, row in self.products_with_clusters.iterrows():
+                    pid = row.get('id')
+                    if pd.notna(pid):
+                        self._product_cluster_dict[int(pid)] = row
+        product_cluster_dict = self._product_cluster_dict
         
-        # ספירת אינטראקציות לכל משתמש (לחישוב תכונות) - משופר עם עוד מידע
+        # User cluster dictionary
+        if self._user_cluster_dict is None:
+            self._user_cluster_dict = {}
+            if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
+                for _, row in self.users_with_clusters.iterrows():
+                    uid = row.get('user_id')
+                    if pd.notna(uid):
+                        self._user_cluster_dict[int(uid)] = row
+        user_cluster_dict = self._user_cluster_dict
+        
+        # ========== OPTIMIZATION 2: יצירת label encoding יציב לקטגוריות ==========
+        # איסוף כל הקטגוריות הייחודיות
+        all_categories = set()
+        if self.products_df is not None:
+            if 'main_category' in self.products_df.columns:
+                all_categories.update(self.products_df['main_category'].dropna().astype(str).unique())
+            if 'category' in self.products_df.columns:
+                all_categories.update(self.products_df['category'].dropna().astype(str).unique())
+        
+        # יצירת mapping יציב (לא hash - יציב בין הרצות)
+        category_to_id = {cat: idx for idx, cat in enumerate(sorted(all_categories), start=1)}
+        
+        # ========== OPTIMIZATION 3: חישוב תכונות משתמשים מראש ==========
         user_interaction_stats = {}
+        user_purchases_dict = {}  # Cache לרכישות משתמשים
+        
+        # חישוב רכישות לכל משתמש מראש (פעם אחת)
+        if self.purchases_df is not None and 'uid' in self.purchases_df.columns:
+            for uid in user_ids:
+                user_purchases = self.purchases_df[self.purchases_df['uid'] == uid]
+                if len(user_purchases) > 0:
+                    user_purchases_dict[uid] = user_purchases
+        
+        # חישוב תכונות משתמשים
         for uid in user_ids:
             if uid in self.user_id_to_index:
                 user_idx = self.user_id_to_index[uid]
                 user_row = self.interaction_matrix.iloc[user_idx]
-                total_interactions = user_row.sum()
-                num_products_interacted = (user_row > 0).sum()
+                total_interactions = float(user_row.sum())
+                num_products_interacted = int((user_row > 0).sum())
                 
-                # חישוב רכישות של המשתמש
+                # חישוב רכישות (מטמון)
                 total_purchases = 0
-                if uid in self.purchases_df['uid'].values:
-                    user_purchases = self.purchases_df[self.purchases_df['uid'] == uid]
-                    total_purchases = user_purchases['purchases'].sum()
-                
-                # חישוב ממוצע מחיר שהמשתמש שילם
                 avg_price_paid = 0.0
-                if total_purchases > 0 and uid in self.purchases_df['uid'].values:
-                    user_purchases = self.purchases_df[self.purchases_df['uid'] == uid]
-                    purchased_product_ids = user_purchases['product_id'].unique()
-                    prices = []
-                    for pid in purchased_product_ids:
-                        if pid in self.products_df['id'].values:
-                            price = self.products_df[self.products_df['id'] == pid]['price'].iloc[0]
-                            prices.append(price)
-                    avg_price_paid = np.mean(prices) if prices else 0.0
+                if uid in user_purchases_dict:
+                    user_purchases = user_purchases_dict[uid]
+                    total_purchases = int(user_purchases['purchases'].sum())
+                    if total_purchases > 0:
+                        purchased_product_ids = user_purchases['product_id'].unique()
+                        prices = []
+                        for pid in purchased_product_ids:
+                            if int(pid) in product_dict:
+                                price = product_dict[int(pid)].get('price', 0)
+                                if pd.notna(price) and price > 0:
+                                    prices.append(float(price))
+                        avg_price_paid = float(np.mean(prices)) if prices else 0.0
                 
-                # חישוב category diversity של המשתמש
+                # חישוב category diversity (משופר)
                 user_categories = set()
                 if uid in self.clicks_df['uid'].values:
                     user_clicks = self.clicks_df[self.clicks_df['uid'] == uid]
-                    for _, row in user_clicks.iterrows():
-                        pid = row['product_id']
-                        if pid in self.products_df['id'].values:
-                            product_row = self.products_df[self.products_df['id'] == pid].iloc[0]
-                            if 'main_category' in product_row:
-                                user_categories.add(str(product_row['main_category']))
-                            elif 'category' in product_row:
-                                user_categories.add(str(product_row['category']))
-                category_diversity = len(user_categories)
+                    for pid in user_clicks['product_id'].unique():
+                        if int(pid) in product_dict:
+                            prod = product_dict[int(pid)]
+                            if 'main_category' in prod and pd.notna(prod['main_category']):
+                                user_categories.add(str(prod['main_category']))
+                            elif 'category' in prod and pd.notna(prod['category']):
+                                user_categories.add(str(prod['category']))
                 
                 user_interaction_stats[uid] = {
                     'total_interactions': total_interactions,
                     'num_products': num_products_interacted,
                     'total_purchases': total_purchases,
                     'avg_price_paid': avg_price_paid,
-                    'category_diversity': category_diversity
+                    'category_diversity': len(user_categories)
                 }
         
-        # יצירת דוגמאות
-        count = 0
+        # ========== OPTIMIZATION 4: חישוב תכונות מוצרים מראש ==========
+        product_stats = {}
+        product_purchases_dict = {}  # Cache לרכישות מוצרים
+        
+        if self.purchases_df is not None and 'product_id' in self.purchases_df.columns:
+            for pid in product_ids:
+                product_purchases = self.purchases_df[self.purchases_df['product_id'] == pid]
+                if len(product_purchases) > 0:
+                    product_purchases_dict[pid] = product_purchases
+        
+        for pid in product_ids:
+            pid_int = int(pid)
+            stats = {
+                'price': 0.0,
+                'views': 0,
+                'category_id': 0,
+                'cluster': 0,
+                'purchase_rate': 0.0
+            }
+            
+            if pid_int in product_dict:
+                prod = product_dict[pid_int]
+                stats['price'] = float(prod.get('price', 0)) if pd.notna(prod.get('price', 0)) else 0.0
+                stats['views'] = int(prod.get('views', 0)) if pd.notna(prod.get('views', 0)) else 0
+                
+                # קטגוריה עם label encoding יציב
+                category_str = None
+                if 'main_category' in prod and pd.notna(prod['main_category']):
+                    category_str = str(prod['main_category'])
+                elif 'category' in prod and pd.notna(prod['category']):
+                    category_str = str(prod['category'])
+                
+                if category_str and category_str in category_to_id:
+                    stats['category_id'] = category_to_id[category_str]
+            
+            if pid_int in product_cluster_dict:
+                cluster_row = product_cluster_dict[pid_int]
+                if 'ml_cluster' in cluster_row:
+                    cluster_value = cluster_row['ml_cluster']
+                    if isinstance(cluster_value, str):
+                        # אם זה string, נשתמש ב-label encoding
+                        if cluster_value in category_to_id:
+                            stats['cluster'] = category_to_id[cluster_value]
+                        else:
+                            stats['cluster'] = len(category_to_id) + hash(cluster_value) % 1000
+                    else:
+                        stats['cluster'] = float(cluster_value) if pd.notna(cluster_value) else 0.0
+            
+            if pid in product_purchases_dict:
+                product_purchases = product_purchases_dict[pid]
+                stats['purchase_rate'] = float(len(product_purchases) / max(len(self.users_df), 1))
+            
+            product_stats[pid] = stats
+        
+        # ========== OPTIMIZATION 5: Smart Sampling - יותר positive samples ==========
+        # איסוף כל הזוגות עם אינטראקציות (positive samples)
+        positive_pairs = []
+        negative_pairs = []
+        
         for uid in user_ids:
-            if count >= sample_size:
-                break
+            if uid not in self.user_id_to_index:
+                continue
+            user_idx = self.user_id_to_index[uid]
+            user_row = self.interaction_matrix.iloc[user_idx]
+            
+            for pid in product_ids:
+                pid_int = int(pid)
+                column_name = f'product_{pid}'
+                if column_name in self.interaction_matrix.columns:
+                    interaction_value = self.interaction_matrix.loc[uid, column_name]
+                    if interaction_value > 0:
+                        positive_pairs.append((uid, pid))
+                    else:
+                        negative_pairs.append((uid, pid))
+        
+        # Sampling: 70% positive, 30% negative (או לפי sample_size)
+        num_positive = min(len(positive_pairs), int(sample_size * 0.7))
+        num_negative = min(len(negative_pairs), sample_size - num_positive)
+        
+        # דגימה אקראית
+        if len(positive_pairs) > num_positive:
+            indices = np.random.choice(len(positive_pairs), num_positive, replace=False)
+            positive_pairs = [positive_pairs[i] for i in indices]
+        else:
+            positive_pairs = positive_pairs[:num_positive]
+        
+        if len(negative_pairs) > num_negative:
+            indices = np.random.choice(len(negative_pairs), num_negative, replace=False)
+            negative_pairs = [negative_pairs[i] for i in indices]
+        else:
+            negative_pairs = negative_pairs[:num_negative]
+        
+        all_pairs = positive_pairs + negative_pairs
+        np.random.shuffle(all_pairs)  # ערבוב
+        
+        print(f"   Sampling: {len(positive_pairs)} positive, {len(negative_pairs)} negative samples")
+        
+        # ========== יצירת features ==========
+        features_list = []
+        labels_list = []
+        stats = {
+            'users_with_cluster': 0,
+            'users_without_cluster': 0,
+            'products_with_cluster': 0,
+            'products_without_cluster': 0
+        }
+        
+        for uid, pid in all_pairs:
+            pid_int = int(pid)
             
             # תכונות משתמש
-            user_cluster = 0
-            if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
-                if uid in self.users_with_clusters['user_id'].values:
-                    user_row = self.users_with_clusters[self.users_with_clusters['user_id'] == uid]
-                    if 'cluster' in user_row.columns:
-                        user_cluster = user_row['cluster'].iloc[0]
-                        stats['users_with_cluster'] += 1
-                    else:
-                        stats['users_without_cluster'] += 1
+            user_cluster = 0.0
+            user_category_encoded = 0.0
+            if uid in user_cluster_dict:
+                user_cluster_row = user_cluster_dict[uid]
+                if 'cluster' in user_cluster_row:
+                    cluster_val = user_cluster_row['cluster']
+                    user_cluster = float(cluster_val) if pd.notna(cluster_val) else 0.0
+                    stats['users_with_cluster'] += 1
                 else:
                     stats['users_without_cluster'] += 1
+                
+                if 'category' in user_cluster_row:
+                    category_name = str(user_cluster_row['category'])
+                    if category_name in category_to_id:
+                        user_category_encoded = float(category_to_id[category_name])
             else:
                 stats['users_without_cluster'] += 1
             
-            user_stats = user_interaction_stats.get(uid, {'total_interactions': 0, 'num_products': 0})
+            user_stats = user_interaction_stats.get(uid, {
+                'total_interactions': 0, 'num_products': 0, 'total_purchases': 0,
+                'avg_price_paid': 0.0, 'category_diversity': 0
+            })
             
-            for pid in product_ids:
-                if count >= sample_size:
-                    break
-                
-                # תכונות מוצר
-                product_cluster = 0
-                product_price = 0
-                product_category = 0
-                
-                if pid in self.products_df['id'].values:
-                    product_row = self.products_df[self.products_df['id'] == pid].iloc[0]
-                    product_price = product_row.get('price', 0)
-                    # קטגוריה - נמיר למספר
-                    if 'main_category' in product_row:
-                        category_str = str(product_row['main_category'])
-                        product_category = hash(category_str) % 100  # המרה פשוטה למספר
-                    elif 'category' in product_row:
-                        category_str = str(product_row['category'])
-                        product_category = hash(category_str) % 100  # המרה פשוטה למספר
-                
-                # ספירת קטגוריות
-                if product_category > 0:
-                    stats['products_with_category'] += 1
-                else:
-                    stats['products_without_category'] += 1
-                
-                if pid in self.products_with_clusters['id'].values:
-                    product_cluster_row = self.products_with_clusters[self.products_with_clusters['id'] == pid]
-                    if 'ml_cluster' in product_cluster_row.columns:
-                        cluster_value = product_cluster_row['ml_cluster'].iloc[0]
-                        # Convert cluster to number (if it's a string category name, hash it)
-                        if isinstance(cluster_value, str):
-                            product_cluster = hash(cluster_value) % 1000  # Convert string to number
-                        else:
-                            product_cluster = float(cluster_value) if pd.notna(cluster_value) else 0
-                        stats['products_with_cluster'] += 1
-                    else:
-                        stats['products_without_cluster'] += 1
-                else:
-                    stats['products_without_cluster'] += 1
-                
-                # ספירת קטגוריות
-                if product_category > 0:
-                    stats['products_with_category'] += 1
-                else:
-                    stats['products_without_category'] += 1
-                
-                # תכונות נוספות - מוסיפים תכונות שיעזרו לרשת ללמוד טוב יותר
-                product_views = product_row.get('views', 0) if pid in self.products_df['id'].values else 0
-                
-                # קטגוריה של המשתמש (לא רק cluster number)
-                user_category_encoded = 0
-                if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
-                    if uid in self.users_with_clusters['user_id'].values:
-                        user_row_cluster = self.users_with_clusters[self.users_with_clusters['user_id'] == uid]
-                        if 'category' in user_row_cluster.columns:
-                            category_name = str(user_row_cluster['category'].iloc[0])
-                            user_category_encoded = hash(category_name) % 1000
-                
-                # דמיון בין קטגוריות (אם המשתמש והמוצר באותה קטגוריה ראשית)
-                category_match = 1.0 if (product_category > 0 and user_category_encoded > 0) else 0.0
-                
-                # תכונות נוספות - דמיון משתמשים ופופולריות
-                user_similarity_score = 0.0
-                if uid in self.user_id_to_index and self.user_similarity_matrix is not None:
-                    user_idx = self.user_id_to_index[uid]
-                    # ממוצע דמיון למשתמשים אחרים (לא כולל עצמו)
-                    user_similarities = self.user_similarity_matrix[user_idx]
-                    user_similarity_score = np.mean(np.delete(user_similarities, user_idx)) if len(user_similarities) > 1 else 0.0
-                
-                # פופולריות המוצר (נורמלית)
-                product_popularity = min(product_views / 1000000.0, 1.0) if product_views > 0 else 0.0
-                
-                # חישוב purchase rate של המוצר
-                product_purchase_rate = 0.0
-                if pid in self.purchases_df['product_id'].values:
-                    product_purchases = self.purchases_df[self.purchases_df['product_id'] == pid]
-                    product_purchase_rate = len(product_purchases) / max(len(self.users_df), 1)  # נורמליזציה
-                
-                # חישוב price similarity (כמה המחיר דומה למה שהמשתמש שילם בעבר)
-                price_similarity = 0.0
-                if user_stats.get('avg_price_paid', 0) > 0 and product_price > 0:
-                    # ככל שהמחיר קרוב יותר לממוצע שהמשתמש שילם, הציון גבוה יותר
-                    price_diff = abs(product_price - user_stats['avg_price_paid'])
-                    max_price = max(product_price, user_stats['avg_price_paid'])
-                    price_similarity = 1.0 - (price_diff / max_price) if max_price > 0 else 0.0
-                
-                # חישוב features נוספים לשיפור דיוק ו-scalability
-                # User engagement score (כמה המשתמש פעיל)
-                user_engagement = min(user_stats['total_interactions'] / 100.0, 1.0) if user_stats['total_interactions'] > 0 else 0.0
-                
-                # Category popularity (כמה פופולרית הקטגוריה)
-                category_popularity = 0.0
-                if product_category > 0:
-                    # ספירת כמה מוצרים יש בקטגוריה הזו
-                    category_products = self.products_df[
-                        (self.products_df['main_category'].apply(lambda x: hash(str(x)) % 100) == product_category) |
-                        (self.products_df['category'].apply(lambda x: hash(str(x)) % 100) == product_category)
-                    ]
-                    category_popularity = min(len(category_products) / 1000.0, 1.0) if len(category_products) > 0 else 0.0
-                
-                # תכונות משולבות - הוספנו עוד תכונות (מ-15 ל-17 תכונות) לשיפור דיוק ל-95%+
-                feature_vector = [
-                    float(user_cluster),                    # 0: אשכול משתמש
-                    float(product_cluster),                  # 1: אשכול מוצר
-                    float(product_price),                    # 2: מחיר מוצר
-                    float(product_category),                 # 3: קטגוריה מוצר
-                    float(user_stats['total_interactions']), # 4: סך אינטראקציות משתמש
-                    float(user_stats['num_products']),       # 5: מספר מוצרים שהמשתמש התקשר איתם
-                    float(product_views),                    # 6: מספר צפיות במוצר
-                    float(user_category_encoded),           # 7: קטגוריה של המשתמש
-                    float(category_match),                   # 8: התאמת קטגוריות
-                    float(product_price / (user_stats['total_interactions'] + 1)),  # 9: יחס מחיר לאינטראקציות
-                    float(user_similarity_score),            # 10: דמיון משתמשים
-                    float(product_popularity),               # 11: פופולריות מוצר
-                    float(user_stats.get('total_purchases', 0)),  # 12: סך רכישות משתמש
-                    float(product_purchase_rate),            # 13: שיעור רכישות של המוצר
-                    float(price_similarity),                 # 14: דמיון מחיר למה שהמשתמש שילם
-                    float(user_engagement),                  # 15: User engagement score (חדש!)
-                    float(category_popularity)                # 16: Category popularity (חדש!)
-                ]
-                
-                # תווית: האם יש אינטראקציה?
-                label = 0
-                if uid in self.user_id_to_index and pid in self.product_id_to_index:
-                    column_name = f'product_{pid}'
-                    if column_name in self.interaction_matrix.columns:
-                        interaction_value = self.interaction_matrix.loc[uid, column_name]
-                        label = 1 if interaction_value > 0 else 0
-                
-                features_list.append(feature_vector)
-                labels_list.append(label)
-                count += 1
+            # תכונות מוצר
+            prod_stats = product_stats.get(pid, {
+                'price': 0.0, 'views': 0, 'category_id': 0, 'cluster': 0.0, 'purchase_rate': 0.0
+            })
+            
+            if pid_int in product_cluster_dict:
+                stats['products_with_cluster'] += 1
+            else:
+                stats['products_without_cluster'] += 1
+            
+            # חישוב תכונות נוספות
+            product_price = prod_stats['price']
+            product_category = prod_stats['category_id']
+            product_cluster = prod_stats['cluster']
+            product_views = prod_stats['views']
+            product_purchase_rate = prod_stats['purchase_rate']
+            
+            category_match = 1.0 if (product_category > 0 and user_category_encoded > 0 and 
+                                    product_category == user_category_encoded) else 0.0
+            
+            # User similarity score
+            user_similarity_score = 0.0
+            if uid in self.user_id_to_index and self.user_similarity_matrix is not None:
+                user_idx = self.user_id_to_index[uid]
+                user_similarities = self.user_similarity_matrix[user_idx]
+                user_similarity_score = float(np.mean(np.delete(user_similarities, user_idx))) if len(user_similarities) > 1 else 0.0
+            
+            product_popularity = min(product_views / 1000000.0, 1.0) if product_views > 0 else 0.0
+            
+            price_similarity = 0.0
+            if user_stats['avg_price_paid'] > 0 and product_price > 0:
+                price_diff = abs(product_price - user_stats['avg_price_paid'])
+                max_price = max(product_price, user_stats['avg_price_paid'])
+                price_similarity = 1.0 - (price_diff / max_price) if max_price > 0 else 0.0
+            
+            user_engagement = min(user_stats['total_interactions'] / 100.0, 1.0) if user_stats['total_interactions'] > 0 else 0.0
+            
+            # Category popularity (משופר - עם label encoding)
+            category_popularity = 0.0
+            if product_category > 0:
+                # ספירת מוצרים בקטגוריה
+                category_count = sum(1 for p in product_dict.values() 
+                                   if (p.get('main_category') and category_to_id.get(str(p['main_category']), 0) == product_category) or
+                                       (p.get('category') and category_to_id.get(str(p['category']), 0) == product_category))
+                category_popularity = min(category_count / 1000.0, 1.0)
+            
+            # יצירת וקטור תכונות
+            feature_vector = [
+                float(user_cluster),                    # 0
+                float(product_cluster),                 # 1
+                float(product_price),                   # 2
+                float(product_category),                # 3
+                float(user_stats['total_interactions']), # 4
+                float(user_stats['num_products']),      # 5
+                float(product_views),                  # 6
+                float(user_category_encoded),          # 7
+                float(category_match),                  # 8
+                float(product_price / (user_stats['total_interactions'] + 1)),  # 9
+                float(user_similarity_score),          # 10
+                float(product_popularity),              # 11
+                float(user_stats['total_purchases']),   # 12
+                float(product_purchase_rate),           # 13
+                float(price_similarity),                # 14
+                float(user_engagement),                 # 15
+                float(category_popularity)              # 16
+            ]
+            
+            # תווית
+            label = 1 if (uid, pid) in positive_pairs else 0
+            
+            features_list.append(feature_vector)
+            labels_list.append(label)
         
         # המרה למערכים
         X_features = np.array(features_list)
         y_labels = np.array(labels_list)
         
-        print(f"   Created {len(features_list)} samples with {X_features.shape[1]} features (improved for 95%+ accuracy, scalable)")
-        print(f"   Positive samples (interactions): {y_labels.sum()}, Negative: {(y_labels == 0).sum()}")
+        print(f"   Created {len(features_list)} samples with {X_features.shape[1]} features (optimized)")
+        print(f"   Positive samples: {y_labels.sum()}, Negative: {(y_labels == 0).sum()}")
         
-        # הצגת סטטיסטיקות קטגוריזציה
-        total_user_checks = stats['users_with_cluster'] + stats['users_without_cluster']
-        total_product_checks = stats['products_with_cluster'] + stats['products_without_cluster']
-        
-        if total_user_checks > 0:
-            user_cluster_pct = (stats['users_with_cluster'] / total_user_checks) * 100
+        # סטטיסטיקות
+        total_checks = len(all_pairs)
+        if total_checks > 0:
             print(f"\n   Clustering Usage Statistics:")
-            print(f"      Users with cluster: {stats['users_with_cluster']}/{total_user_checks} ({user_cluster_pct:.1f}%)")
-            print(f"      Users without cluster: {stats['users_without_cluster']}/{total_user_checks} ({(100-user_cluster_pct):.1f}%)")
-        
-        if total_product_checks > 0:
-            product_cluster_pct = (stats['products_with_cluster'] / total_product_checks) * 100
-            product_category_pct = (stats['products_with_category'] / total_product_checks) * 100
-            print(f"      Products with cluster: {stats['products_with_cluster']}/{total_product_checks} ({product_cluster_pct:.1f}%)")
-            print(f"      Products without cluster: {stats['products_without_cluster']}/{total_product_checks} ({(100-product_cluster_pct):.1f}%)")
-            print(f"      Products with category: {stats['products_with_category']}/{total_product_checks} ({product_category_pct:.1f}%)")
-            print(f"      Products without category: {stats['products_without_category']}/{total_product_checks} ({(100-product_category_pct):.1f}%)")
+            print(f"      Users with cluster: {stats['users_with_cluster']}/{total_checks} ({stats['users_with_cluster']/total_checks*100:.1f}%)")
+            print(f"      Products with cluster: {stats['products_with_cluster']}/{total_checks} ({stats['products_with_cluster']/total_checks*100:.1f}%)")
         
         return X_features, y_labels
     
@@ -1255,7 +1321,6 @@ class RecommendationSystem:
         print(f"   (This helps the model learn from rare positive interactions)")
         
         # הוספת Early Stopping, ReduceLROnPlateau, ו-ModelCheckpoint לשיפור האימון
-        from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
         import tempfile
         import os
         
@@ -1518,13 +1583,14 @@ class RecommendationSystem:
     
     def predict_product_score(self, user_id, product_id):
         """
-        Uses Neural Network to predict relevance score for a user-product pair
+        Uses Neural Network to predict relevance score for a user-product pair (OPTIMIZED)
         
         What it does:
-        1. Extracts 10 features (user_cluster, product_cluster, price, category, total_interactions, num_products, views, user_category, category_match, price_ratio)
-        2. Normalizes features using self.feature_scaler (from training)
-        3. Sends to Neural Network for prediction
-        4. Returns relevance score (0-1)
+        1. Extracts 17 features using cached dictionaries (O(1) lookups)
+        2. Uses stable label encoding (consistent with prepare_neural_network_features)
+        3. Normalizes features using self.feature_scaler (from training)
+        4. Sends to Neural Network for prediction
+        5. Returns relevance score (0-1)
         
         Score interpretation:
         - 0.0 - 0.3: Not relevant (user probably won't like)
@@ -1540,112 +1606,139 @@ class RecommendationSystem:
         - float: Relevance score (0-1), or None if error
         """
         if not NEURAL_NETWORK_AVAILABLE:
-            print("Error: TensorFlow not available.")
             return None
         
-        if self.neural_ranking_model is None:
-            print("Error: Neural network model not trained. Call train_neural_ranking_model() first.")
+        if self.neural_ranking_model is None or self.feature_scaler is None:
             return None
         
-        if self.feature_scaler is None:
-            print("Error: Feature scaler not found. Model needs to be trained first.")
-            return None
+        # ========== OPTIMIZATION: יצירת/שימוש ב-dictionaries ו-label encoding ==========
+        # יצירת dictionaries אם לא קיימים
+        if self._product_dict is None:
+            self._product_dict = {}
+            if self.products_df is not None:
+                for _, row in self.products_df.iterrows():
+                    pid = row.get('id')
+                    if pd.notna(pid):
+                        self._product_dict[int(pid)] = row
         
-        # שלב 1: הכנת תכונות
-        # זה אותו קוד כמו ב-prepare_neural_network_features, אבל רק לזוג אחד
+        if self._product_cluster_dict is None:
+            self._product_cluster_dict = {}
+            if self.products_with_clusters is not None and 'id' in self.products_with_clusters.columns:
+                for _, row in self.products_with_clusters.iterrows():
+                    pid = row.get('id')
+                    if pd.notna(pid):
+                        self._product_cluster_dict[int(pid)] = row
         
-        # תכונות משתמש
-        user_cluster = 0
-        if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
-            if user_id in self.users_with_clusters['user_id'].values:
-                user_row = self.users_with_clusters[self.users_with_clusters['user_id'] == user_id]
-                if 'cluster' in user_row.columns:
-                    user_cluster = user_row['cluster'].iloc[0]
+        if self._user_cluster_dict is None:
+            self._user_cluster_dict = {}
+            if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
+                for _, row in self.users_with_clusters.iterrows():
+                    uid = row.get('user_id')
+                    if pd.notna(uid):
+                        self._user_cluster_dict[int(uid)] = row
+        
+        # יצירת label encoding אם לא קיים
+        if self._category_to_id is None:
+            all_categories = set()
+            if self.products_df is not None:
+                if 'main_category' in self.products_df.columns:
+                    all_categories.update(self.products_df['main_category'].dropna().astype(str).unique())
+                if 'category' in self.products_df.columns:
+                    all_categories.update(self.products_df['category'].dropna().astype(str).unique())
+            self._category_to_id = {cat: idx for idx, cat in enumerate(sorted(all_categories), start=1)}
+        
+        # ========== חישוב תכונות משתמש ==========
+        user_cluster = 0.0
+        user_category_encoded = 0.0
+        if user_id in self._user_cluster_dict:
+            user_cluster_row = self._user_cluster_dict[user_id]
+            if 'cluster' in user_cluster_row:
+                cluster_val = user_cluster_row['cluster']
+                user_cluster = float(cluster_val) if pd.notna(cluster_val) else 0.0
+            if 'category' in user_cluster_row:
+                category_name = str(user_cluster_row['category'])
+                if category_name in self._category_to_id:
+                    user_category_encoded = float(self._category_to_id[category_name])
         
         # סטטיסטיקות משתמש
-        total_interactions = 0
+        total_interactions = 0.0
         num_products = 0
         if user_id in self.user_id_to_index:
             user_idx = self.user_id_to_index[user_id]
             user_row = self.interaction_matrix.iloc[user_idx]
-            total_interactions = user_row.sum()
-            num_products = (user_row > 0).sum()
+            total_interactions = float(user_row.sum())
+            num_products = int((user_row > 0).sum())
         
-        # תכונות מוצר
-        product_cluster = 0
-        product_price = 0
-        product_category = 0
+        # ========== חישוב תכונות מוצר ==========
+        pid_int = int(product_id)
+        product_cluster = 0.0
+        product_price = 0.0
+        product_category = 0.0
+        product_views = 0
         
-        if self.products_df is not None and product_id in self.products_df['id'].values:
-            product_row = self.products_df[self.products_df['id'] == product_id].iloc[0]
-            product_price = product_row.get('price', 0)
-            # קטגוריה - נמיר למספר
-            if 'main_category' in product_row:
-                category_str = str(product_row['main_category'])
-                product_category = hash(category_str) % 100
-            elif 'category' in product_row:
-                category_str = str(product_row['category'])
-                product_category = hash(category_str) % 100
+        if pid_int in self._product_dict:
+            prod = self._product_dict[pid_int]
+            product_price = float(prod.get('price', 0)) if pd.notna(prod.get('price', 0)) else 0.0
+            product_views = int(prod.get('views', 0)) if pd.notna(prod.get('views', 0)) else 0
+            
+            # קטגוריה עם label encoding יציב
+            category_str = None
+            if 'main_category' in prod and pd.notna(prod['main_category']):
+                category_str = str(prod['main_category'])
+            elif 'category' in prod and pd.notna(prod['category']):
+                category_str = str(prod['category'])
+            
+            if category_str and category_str in self._category_to_id:
+                product_category = float(self._category_to_id[category_str])
         
-        if self.products_with_clusters is not None and product_id in self.products_with_clusters['id'].values:
-            product_cluster_row = self.products_with_clusters[self.products_with_clusters['id'] == product_id]
-            if 'ml_cluster' in product_cluster_row.columns:
-                cluster_value = product_cluster_row['ml_cluster'].iloc[0]
-                # Convert cluster to number (if it's a string category name, hash it)
+        if pid_int in self._product_cluster_dict:
+            cluster_row = self._product_cluster_dict[pid_int]
+            if 'ml_cluster' in cluster_row:
+                cluster_value = cluster_row['ml_cluster']
                 if isinstance(cluster_value, str):
-                    product_cluster = hash(cluster_value) % 1000  # Convert string to number
+                    if cluster_value in self._category_to_id:
+                        product_cluster = float(self._category_to_id[cluster_value])
+                    else:
+                        product_cluster = float(len(self._category_to_id) + hash(cluster_value) % 1000)
                 else:
-                    product_cluster = float(cluster_value) if pd.notna(cluster_value) else 0
+                    product_cluster = float(cluster_value) if pd.notna(cluster_value) else 0.0
         
-        # תכונות נוספות (כמו ב-prepare_neural_network_features)
-        product_views = product_row.get('views', 0) if self.products_df is not None and product_id in self.products_df['id'].values else 0
+        # ========== חישוב תכונות נוספות ==========
+        category_match = 1.0 if (product_category > 0 and user_category_encoded > 0 and 
+                                 product_category == user_category_encoded) else 0.0
         
-        # קטגוריה של המשתמש
-        user_category_encoded = 0
-        if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
-            if user_id in self.users_with_clusters['user_id'].values:
-                user_row_cluster = self.users_with_clusters[self.users_with_clusters['user_id'] == user_id]
-                if 'category' in user_row_cluster.columns:
-                    category_name = str(user_row_cluster['category'].iloc[0])
-                    user_category_encoded = hash(category_name) % 1000
-        
-        # דמיון בין קטגוריות
-        category_match = 1.0 if (product_category > 0 and user_category_encoded > 0) else 0.0
-        
-        # תכונות נוספות - דמיון משתמשים ופופולריות
+        # User similarity score
         user_similarity_score = 0.0
         if user_id in self.user_id_to_index and self.user_similarity_matrix is not None:
             user_idx = self.user_id_to_index[user_id]
             user_similarities = self.user_similarity_matrix[user_idx]
-            user_similarity_score = np.mean(np.delete(user_similarities, user_idx)) if len(user_similarities) > 1 else 0.0
+            user_similarity_score = float(np.mean(np.delete(user_similarities, user_idx))) if len(user_similarities) > 1 else 0.0
         
-        # פופולריות המוצר (נורמלית)
         product_popularity = min(product_views / 1000000.0, 1.0) if product_views > 0 else 0.0
         
-        # חישוב features נוספים (כמו ב-prepare_neural_network_features)
-        # Purchase rate של המוצר
+        # Purchase rate של המוצר (משופר עם dictionary)
         product_purchase_rate = 0.0
-        if product_id in self.purchases_df['product_id'].values:
+        if self.purchases_df is not None and 'product_id' in self.purchases_df.columns:
             product_purchases = self.purchases_df[self.purchases_df['product_id'] == product_id]
-            product_purchase_rate = len(product_purchases) / max(len(self.users_df), 1)
+            if len(product_purchases) > 0:
+                product_purchase_rate = float(len(product_purchases) / max(len(self.users_df), 1))
         
-        # Total purchases של המשתמש
+        # Total purchases ו-avg price של המשתמש (משופר)
         total_purchases = 0
-        if user_id in self.purchases_df['uid'].values:
-            user_purchases = self.purchases_df[self.purchases_df['uid'] == user_id]
-            total_purchases = user_purchases['purchases'].sum()
-        
-        # Average price שהמשתמש שילם
         avg_price_paid = 0.0
-        if total_purchases > 0 and user_id in self.purchases_df['uid'].values:
+        if self.purchases_df is not None and 'uid' in self.purchases_df.columns:
             user_purchases = self.purchases_df[self.purchases_df['uid'] == user_id]
-            purchased_product_ids = user_purchases['product_id'].unique()
-            prices = []
-            for pid in purchased_product_ids:
-                if pid in self.products_df['id'].values:
-                    price = self.products_df[self.products_df['id'] == pid]['price'].iloc[0]
-                    prices.append(price)
-            avg_price_paid = np.mean(prices) if prices else 0.0
+            if len(user_purchases) > 0:
+                total_purchases = int(user_purchases['purchases'].sum())
+                if total_purchases > 0:
+                    purchased_product_ids = user_purchases['product_id'].unique()
+                    prices = []
+                    for pid in purchased_product_ids:
+                        if int(pid) in self._product_dict:
+                            price = self._product_dict[int(pid)].get('price', 0)
+                            if pd.notna(price) and price > 0:
+                                prices.append(float(price))
+                    avg_price_paid = float(np.mean(prices)) if prices else 0.0
         
         # Price similarity
         price_similarity = 0.0
@@ -1654,47 +1747,39 @@ class RecommendationSystem:
             max_price = max(product_price, avg_price_paid)
             price_similarity = 1.0 - (price_diff / max_price) if max_price > 0 else 0.0
         
-        # חישוב features נוספים (כמו ב-prepare_neural_network_features)
-        # User engagement score
         user_engagement = min(total_interactions / 100.0, 1.0) if total_interactions > 0 else 0.0
         
-        # Category popularity
+        # Category popularity (משופר - עם label encoding)
         category_popularity = 0.0
-        if product_category > 0 and self.products_df is not None:
-            category_products = self.products_df[
-                (self.products_df['main_category'].apply(lambda x: hash(str(x)) % 100) == product_category) |
-                (self.products_df['category'].apply(lambda x: hash(str(x)) % 100) == product_category)
-            ]
-            category_popularity = min(len(category_products) / 1000.0, 1.0) if len(category_products) > 0 else 0.0
+        if product_category > 0 and self._product_dict:
+            category_count = sum(1 for p in self._product_dict.values() 
+                               if (p.get('main_category') and self._category_to_id.get(str(p['main_category']), 0) == product_category) or
+                                   (p.get('category') and self._category_to_id.get(str(p['category']), 0) == product_category))
+            category_popularity = min(category_count / 1000.0, 1.0)
         
-        # יצירת וקטור תכונות (17 תכונות - כמו ב-prepare_neural_network_features)
+        # ========== יצירת וקטור תכונות (17 תכונות - כמו ב-prepare_neural_network_features) ==========
         feature_vector = np.array([[
-            float(user_cluster),           # 0: אשכול משתמש
-            float(product_cluster),        # 1: אשכול מוצר
-            float(product_price),          # 2: מחיר מוצר
-            float(product_category),       # 3: קטגוריה מוצר
-            float(total_interactions),     # 4: סך אינטראקציות משתמש
-            float(num_products),           # 5: מספר מוצרים שהמשתמש התקשר איתם
-            float(product_views),          # 6: מספר צפיות במוצר
-            float(user_category_encoded),  # 7: קטגוריה של המשתמש
-            float(category_match),         # 8: התאמת קטגוריות
+            float(user_cluster),                           # 0: אשכול משתמש
+            float(product_cluster),                        # 1: אשכול מוצר
+            float(product_price),                          # 2: מחיר מוצר
+            float(product_category),                       # 3: קטגוריה מוצר
+            float(total_interactions),                     # 4: סך אינטראקציות משתמש
+            float(num_products),                            # 5: מספר מוצרים שהמשתמש התקשר איתם
+            float(product_views),                          # 6: מספר צפיות במוצר
+            float(user_category_encoded),                 # 7: קטגוריה של המשתמש
+            float(category_match),                         # 8: התאמת קטגוריות
             float(product_price / (total_interactions + 1)),  # 9: יחס מחיר לאינטראקציות
-            float(user_similarity_score),  # 10: דמיון משתמשים
-            float(product_popularity),     # 11: פופולריות מוצר
-            float(total_purchases),        # 12: סך רכישות משתמש
-            float(product_purchase_rate),  # 13: שיעור רכישות של המוצר
-            float(price_similarity),       # 14: דמיון מחיר למה שהמשתמש שילם
-            float(user_engagement),        # 15: User engagement score (חדש!)
-            float(category_popularity)     # 16: Category popularity (חדש!)
+            float(user_similarity_score),                  # 10: דמיון משתמשים
+            float(product_popularity),                     # 11: פופולריות מוצר
+            float(total_purchases),                        # 12: סך רכישות משתמש
+            float(product_purchase_rate),                   # 13: שיעור רכישות של המוצר
+            float(price_similarity),                       # 14: דמיון מחיר למה שהמשתמש שילם
+            float(user_engagement),                        # 15: User engagement score
+            float(category_popularity)                      # 16: Category popularity
         ]])
         
-        # שלב 2: נרמול (חשוב! המודל למד על תכונות מנורמלות)
-        # משתמשים ב-self.feature_scaler שנוצר בזמן אימון
+        # ========== נרמול וחיזוי ==========
         feature_vector_normalized = self.feature_scaler.transform(feature_vector)
-        
-        # שלב 3: חיזוי עם הרשת העצבית
-        # predict = הפונקציה שמחזירה ציון
-        # [0][0] = לוקחים את הערך הראשון (יש רק אחד)
         score = self.neural_ranking_model.predict(feature_vector_normalized, verbose=0)[0][0]
         
         return float(score)
@@ -1751,10 +1836,11 @@ class RecommendationSystem:
         # שלב 2: דירוג כל המלצה עם הרשת העצבית
         scored_recommendations = []
         
-        for product_id in base_recommendations:
+        # OPTIMIZATION: שימוש ב-enumerate במקום .index() (O(1) במקום O(n))
+        for idx, product_id in enumerate(base_recommendations):
             # חישוב ציון בסיסי (מ-hybrid_recommendations)
             # הציון הבסיסי הוא המיקום ברשימה (הראשון = הכי טוב)
-            base_score = 1.0 - (base_recommendations.index(product_id) / len(base_recommendations))
+            base_score = 1.0 - (idx / len(base_recommendations))
             # למשל: מוצר ראשון = 1.0, מוצר שני = 0.9, וכו'
             
             # חישוב ציון רשת עצבית
@@ -1764,29 +1850,37 @@ class RecommendationSystem:
                 # אם הרשת לא הצליחה, משתמשים רק בציון בסיסי
                 neural_score = 0.5  # ציון בינוני
             
-            # שלב 3: שילוב ציונים משופר - משקלים דינמיים חכמים ל-95%+ accuracy
-            # אסטרטגיה משופרת: נותנים משקל גבוה ל-Neural Network כשהוא בטוח, אבל גם מגנים מפני overfitting
-            # שיפור ל-95%+ accuracy: משקלים יותר חכמים עם הגנה טובה יותר
+            # שלב 3: שילוב ציונים משופר - לוגיקה מפושטת ויעילה
+            # אסטרטגיה: נותנים משקל דינמי לפי רמת הביטחון של Neural Network
+            # אם Neural Network בטוח (ציון גבוה), נותנים לו יותר משקל
+            # אם Base Score טוב מאוד, נותנים לו יותר משקל
             
-            # אם Neural Score גבוה מאוד (>0.8), זה סימן טוב - נותנים לו משקל גבוה
-            if neural_score > 0.8 and base_score > 0.6:
-                # שניהם טובים מאוד - שילוב אופטימלי ל-95%+
-                final_score = (base_score * 0.2) + (neural_score * 0.8)
-            elif neural_score > 0.7:
-                # Neural Network בטוח - נותנים לו משקל גבוה מאוד
-                final_score = (base_score * 0.15) + (neural_score * 0.85)
-            elif neural_score > 0.5:
-                # Neural Network בינוני - שילוב מאוזן
-                final_score = (base_score * 0.3) + (neural_score * 0.7)
-            elif base_score >= 0.95:
-                # Base Score מצוין מאוד - נותנים לו משקל טוב
-                final_score = (base_score * 0.4) + (neural_score * 0.6)
-            elif base_score >= 0.8:
-                # Base Score טוב - שילוב מאוזן
-                final_score = (base_score * 0.35) + (neural_score * 0.65)
+            # חישוב משקלים דינמיים
+            if neural_score > 0.8:
+                # Neural Network בטוח מאוד - משקל גבוה
+                neural_weight = 0.8
+            elif neural_score > 0.6:
+                # Neural Network בטוח - משקל בינוני-גבוה
+                neural_weight = 0.7
+            elif neural_score > 0.4:
+                # Neural Network בינוני - משקל מאוזן
+                neural_weight = 0.6
             else:
-                # מצב רגיל - יותר משקל ל-Neural Network
-                final_score = (base_score * 0.25) + (neural_score * 0.75)
+                # Neural Network לא בטוח - יותר משקל ל-Base
+                neural_weight = 0.5
+            
+            # התאמה לפי Base Score
+            if base_score > 0.9:
+                # Base Score מצוין - נותנים לו יותר משקל
+                neural_weight = max(0.4, neural_weight - 0.1)
+            elif base_score < 0.3:
+                # Base Score נמוך - יותר משקל ל-Neural
+                neural_weight = min(0.9, neural_weight + 0.1)
+            
+            base_weight = 1.0 - neural_weight
+            
+            # חישוב ציון סופי
+            final_score = (base_score * base_weight) + (neural_score * neural_weight)
             
             scored_recommendations.append({
                 'product_id': product_id,

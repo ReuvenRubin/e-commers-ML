@@ -18,8 +18,7 @@ ML/
 │   │   ├── product_categorization.py
 │   │   └── user_categorization.py
 │   ├── phase2/                             # Phase 2: מערכת המלצות
-│   │   ├── recommendation_system_ml.py
-│   │   └── recommendation_system_ml_with_train_test.py
+│   │   └── recommendation_system_ml.py
 │   └── phase3/                             # Phase 3: NLP חיפוש
 │       └── nlp_search_system.py
 │
@@ -90,7 +89,7 @@ py user_categorization.py
 ```
 
 ### Phase 2: Hybrid Recommendation System
-**קבצים:** `src/phase2/recommendation_system_ml.py`, `src/phase2/recommendation_system_ml_with_train_test.py`
+**קבצים:** `src/phase2/recommendation_system_ml.py`
 
 **מה זה עושה:**
 - מערכת המלצות היברידית המשלבת:

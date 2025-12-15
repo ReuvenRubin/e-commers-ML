@@ -271,6 +271,53 @@ class ProductCategorization:
         
         return self.products_with_categories
     
+    def get_tfidf_matrix_for_descriptions(self, max_features=100):
+        """
+        Creates TF-IDF matrix for product descriptions (for content-based recommendations)
+        
+        This is separate from the categorization TF-IDF, optimized for recommendations:
+        - Uses only descriptions (not combined text)
+        - Fewer features for faster similarity calculations
+        - Optimized parameters for recommendation use case
+        
+        Parameters:
+        - max_features: Maximum number of features (default: 100)
+        
+        Returns:
+        - TF-IDF matrix (sparse matrix) for product descriptions
+        - TfidfVectorizer instance used
+        """
+        if self.products_df is None:
+            raise ValueError("products_df is not loaded. Call load_data() first.")
+        
+        if 'description' not in self.products_df.columns:
+            raise ValueError("products_df must contain 'description' column")
+        
+        print("Creating TF-IDF matrix for product descriptions (for recommendations)...")
+        
+        # Create a separate TF-IDF vectorizer optimized for recommendations
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        
+        recommendation_tfidf = TfidfVectorizer(
+            max_features=max_features,
+            stop_words='english',
+            ngram_range=(1, 2),  # unigrams and bigrams
+            min_df=2,  # word must appear in at least 2 products
+            max_df=0.95  # word must not appear in more than 95% of products
+        )
+        
+        # Fill missing descriptions with empty string
+        descriptions = self.products_df['description'].fillna('')
+        
+        # Create TF-IDF matrix
+        tfidf_matrix = recommendation_tfidf.fit_transform(descriptions)
+        
+        print(f"Created TF-IDF matrix: {tfidf_matrix.shape}")
+        print(f"  - {tfidf_matrix.shape[0]} products")
+        print(f"  - {tfidf_matrix.shape[1]} features (words/phrases)")
+        
+        return tfidf_matrix, recommendation_tfidf
+    
     def save_results(self):
         """
         Saves product categorization results to CSV files

@@ -57,20 +57,6 @@ def run_phase2():
     print("\nPhase 2 completed successfully!")
     return results
 
-def run_phase2_with_train_test():
-    """Runs Phase 2 with Train/Test Split"""
-    print("\n" + "="*80)
-    print("Starting Phase 2 with Train/Test Split")
-    print("="*80)
-    
-    from recommendation_system_ml_with_train_test import RecommendationSystemWithTrainTest  # type: ignore
-    
-    rec_system = RecommendationSystemWithTrainTest(str(project_root))
-    results = rec_system.run_phase2_with_train_test()
-    
-    print("\nPhase 2 with Train/Test completed successfully!")
-    return results
-
 def run_phase3():
     """Runs Phase 3: NLP Search System"""
     print("\n" + "="*80)
