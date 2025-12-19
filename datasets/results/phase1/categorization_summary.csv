@@ -1,2 +1,2 @@
 algorithm,n_categories,n_users,accuracy,precision,recall,f1_score,best_cv_f1_score
-Random Forest Classifier,8,5000,0.993,0.993358818958819,0.993,0.9929152074651535,0.995047819229104
+Random Forest Classifier,8,5000,0.994,0.9942927294927294,0.994,0.9940213127196044,0.9945413640595294
