@@ -219,7 +219,8 @@ class UserCategorization:
                 'price': product_row.get('price', 0),
                 'views': product_row.get('views', 0),
                 'main_category': product_row.get('main_category', ''),
-                'category': product_row.get('category', '')
+                'category': product_row.get('category', ''),
+                'sub_category': product_row.get('sub_category', '')
             }
         
         # Group interactions by user_id for faster access (Long format)
@@ -263,8 +264,8 @@ class UserCategorization:
                     product_data = products_dict[product_id]
                     prices.append(product_data['price'])
                     views.append(product_data['views'])
-                    # Get category (prefer main_category, fallback to category)
-                    cat = product_data['main_category'] or product_data['category']
+                    # Get category (prefer main_category, fallback to category, then sub_category)
+                    cat = product_data['main_category'] or product_data['category'] or product_data['sub_category']
                     if cat:
                         categories.add(cat)
             
@@ -307,14 +308,14 @@ class UserCategorization:
                 for product_id in user_click_products:
                     if product_id in products_dict:
                         product_data = products_dict[product_id]
-                        cat = product_data['main_category'] or product_data['category']
+                        cat = product_data['main_category'] or product_data['category'] or product_data['sub_category']
                         if cat:
                             category_interactions[cat] = category_interactions.get(cat, 0) + 1
                 
                 for product_id in user_purchase_products:
                     if product_id in products_dict:
                         product_data = products_dict[product_id]
-                        cat = product_data['main_category'] or product_data['category']
+                        cat = product_data['main_category'] or product_data['category'] or product_data['sub_category']
                         if cat:
                             category_interactions[cat] = category_interactions.get(cat, 0) + 2
                 

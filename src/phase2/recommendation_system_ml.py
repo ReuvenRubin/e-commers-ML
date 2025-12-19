@@ -535,10 +535,15 @@ class RecommendationSystem:
         
         What it does:
         - Converts DataFrame to numpy array for efficiency
-        - Normalizes the interaction matrix using StandardScaler
+        - Normalizes the interaction matrix using L2 normalization (unit vectors)
         - Handles users with no interactions (zero vectors) to avoid NaN
         - Calculates cosine similarity between all user pairs
         - Stores similarity matrix for collaborative filtering
+        
+        Note:
+        - Uses L2 normalization instead of StandardScaler to avoid negative similarity values
+        - L2 normalization creates unit vectors (length = 1), which is appropriate for cosine similarity
+        - This ensures similarity values are always between 0 and 1 (not negative)
         
         Returns:
         - None (similarity matrix stored in self.user_similarity_matrix)
@@ -561,15 +566,23 @@ class RecommendationSystem:
             self.user_similarity_matrix = np.eye(len(interaction_array))  # Identity matrix (no similarity)
             return
         
-        # נרמול המטריצה (רק למשתמשים עם אינטראקציות)
-        scaler = StandardScaler()
-        normalized_matrix = scaler.fit_transform(interaction_array)
+        # נרמול המטריצה - L2 normalization (unit vector) במקום StandardScaler
+        # למה? כי StandardScaler יוצר ערכים שליליים (ממוצע = 0), מה שמוביל ל-cosine similarity שלילי
+        # L2 normalization שומר על ערכים חיוביים (0-1) ומתאים יותר ל-cosine similarity
+        
+        # L2 normalization: כל וקטור מחולק באורך שלו (L2 norm)
+        # זה יוצר unit vectors (וקטורים באורך 1) - מתאים ל-cosine similarity
+        row_norms = np.linalg.norm(interaction_array, axis=1, keepdims=True)
+        # הימנעות מחלוקה באפס (למשתמשים ללא אינטראקציות)
+        row_norms[row_norms == 0] = 1.0
+        normalized_matrix = interaction_array / row_norms
         
         # החלפת NaN (אם יש) באפסים (למשתמשים ללא אינטראקציות)
         normalized_matrix = np.nan_to_num(normalized_matrix, nan=0.0, posinf=0.0, neginf=0.0)
         
         # חישוב דמיון קוסינוס
         # cosine_similarity מטפל אוטומטית בוקטורי אפס (מחזיר 0)
+        # עכשיו עם L2 normalization, כל הערכים יהיו בין 0 ל-1 (לא שליליים!)
         self.user_similarity_matrix = cosine_similarity(normalized_matrix)
         
         # החלפת NaN באפסים (אם יש משתמשים עם וקטורי אפס)
@@ -688,9 +701,11 @@ class RecommendationSystem:
         # המרת DataFrame ל-numpy array (יותר יעיל)
         interaction_array = self.interaction_matrix.values
         
-        # נרמול המטריצה (כמו ב-calculate_user_similarity)
-        scaler = StandardScaler()
-        normalized_matrix = scaler.fit_transform(interaction_array)
+        # נרמול המטריצה - L2 normalization (כמו ב-calculate_user_similarity)
+        # L2 normalization במקום StandardScaler כדי למנוע ערכים שליליים
+        row_norms = np.linalg.norm(interaction_array, axis=1, keepdims=True)
+        row_norms[row_norms == 0] = 1.0  # הימנעות מחלוקה באפס
+        normalized_matrix = interaction_array / row_norms
         
         # החלפת NaN (אם יש) באפסים
         normalized_matrix = np.nan_to_num(normalized_matrix, nan=0.0, posinf=0.0, neginf=0.0)
@@ -879,6 +894,8 @@ class RecommendationSystem:
                 all_categories.update(self.products_df['main_category'].dropna().astype(str).unique())
             if 'category' in self.products_df.columns:
                 all_categories.update(self.products_df['category'].dropna().astype(str).unique())
+            if 'sub_category' in self.products_df.columns:
+                all_categories.update(self.products_df['sub_category'].dropna().astype(str).unique())
         
         # יצירת mapping יציב (לא hash - יציב בין הרצות)
         category_to_id = {cat: idx for idx, cat in enumerate(sorted(all_categories), start=1)}
@@ -929,6 +946,8 @@ class RecommendationSystem:
                                 user_categories.add(str(prod['main_category']))
                             elif 'category' in prod and pd.notna(prod['category']):
                                 user_categories.add(str(prod['category']))
+                            elif 'sub_category' in prod and pd.notna(prod['sub_category']):
+                                user_categories.add(str(prod['sub_category']))
                 
                 user_interaction_stats[uid] = {
                     'total_interactions': total_interactions,
@@ -969,6 +988,8 @@ class RecommendationSystem:
                     category_str = str(prod['main_category'])
                 elif 'category' in prod and pd.notna(prod['category']):
                     category_str = str(prod['category'])
+                elif 'sub_category' in prod and pd.notna(prod['sub_category']):
+                    category_str = str(prod['sub_category'])
                 
                 if category_str and category_str in category_to_id:
                     stats['category_id'] = category_to_id[category_str]
@@ -981,9 +1002,9 @@ class RecommendationSystem:
                         # אם זה string, נשתמש ב-label encoding
                         if cluster_value in category_to_id:
                             stats['cluster'] = category_to_id[cluster_value]
-                        else:
-                            stats['cluster'] = len(category_to_id) + hash(cluster_value) % 1000
                     else:
+                            stats['cluster'] = len(category_to_id) + hash(cluster_value) % 1000
+                else:
                         stats['cluster'] = float(cluster_value) if pd.notna(cluster_value) else 0.0
             
             if pid in product_purchases_dict:
@@ -1010,7 +1031,7 @@ class RecommendationSystem:
                     interaction_value = self.interaction_matrix.loc[uid, column_name]
                     if interaction_value > 0:
                         positive_pairs.append((uid, pid))
-                    else:
+                else:
                         negative_pairs.append((uid, pid))
         
         # Sampling: 70% positive, 30% negative (או לפי sample_size)
@@ -1115,7 +1136,8 @@ class RecommendationSystem:
                 # ספירת מוצרים בקטגוריה
                 category_count = sum(1 for p in product_dict.values() 
                                    if (p.get('main_category') and category_to_id.get(str(p['main_category']), 0) == product_category) or
-                                       (p.get('category') and category_to_id.get(str(p['category']), 0) == product_category))
+                                       (p.get('category') and category_to_id.get(str(p['category']), 0) == product_category) or
+                                       (p.get('sub_category') and category_to_id.get(str(p['sub_category']), 0) == product_category))
                 category_popularity = min(category_count / 1000.0, 1.0)
             
             # יצירת וקטור תכונות
@@ -1493,6 +1515,9 @@ class RecommendationSystem:
                 elif 'category' in product_row:
                     category_str = str(product_row['category'])
                     product_category = hash(category_str) % 100
+                elif 'sub_category' in product_row:
+                    category_str = str(product_row['sub_category'])
+                    product_category = hash(category_str) % 100
             
             if self.products_with_clusters is not None and product_id in self.products_with_clusters['id'].values:
                 product_cluster_row = self.products_with_clusters[self.products_with_clusters['id'] == product_id]
@@ -1631,7 +1656,7 @@ class RecommendationSystem:
         
         if self._user_cluster_dict is None:
             self._user_cluster_dict = {}
-            if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
+        if self.users_with_clusters is not None and 'user_id' in self.users_with_clusters.columns:
                 for _, row in self.users_with_clusters.iterrows():
                     uid = row.get('user_id')
                     if pd.notna(uid):
@@ -1645,6 +1670,8 @@ class RecommendationSystem:
                     all_categories.update(self.products_df['main_category'].dropna().astype(str).unique())
                 if 'category' in self.products_df.columns:
                     all_categories.update(self.products_df['category'].dropna().astype(str).unique())
+                if 'sub_category' in self.products_df.columns:
+                    all_categories.update(self.products_df['sub_category'].dropna().astype(str).unique())
             self._category_to_id = {cat: idx for idx, cat in enumerate(sorted(all_categories), start=1)}
         
         # ========== חישוב תכונות משתמש ==========
@@ -1687,6 +1714,8 @@ class RecommendationSystem:
                 category_str = str(prod['main_category'])
             elif 'category' in prod and pd.notna(prod['category']):
                 category_str = str(prod['category'])
+            elif 'sub_category' in prod and pd.notna(prod['sub_category']):
+                category_str = str(prod['sub_category'])
             
             if category_str and category_str in self._category_to_id:
                 product_category = float(self._category_to_id[category_str])
@@ -1754,7 +1783,8 @@ class RecommendationSystem:
         if product_category > 0 and self._product_dict:
             category_count = sum(1 for p in self._product_dict.values() 
                                if (p.get('main_category') and self._category_to_id.get(str(p['main_category']), 0) == product_category) or
-                                   (p.get('category') and self._category_to_id.get(str(p['category']), 0) == product_category))
+                                   (p.get('category') and self._category_to_id.get(str(p['category']), 0) == product_category) or
+                                   (p.get('sub_category') and self._category_to_id.get(str(p['sub_category']), 0) == product_category))
             category_popularity = min(category_count / 1000.0, 1.0)
         
         # ========== יצירת וקטור תכונות (17 תכונות - כמו ב-prepare_neural_network_features) ==========
@@ -1932,7 +1962,8 @@ class RecommendationSystem:
         
         if not interested_products:
             # אם אין אינטראקציות, החזרת מוצרים פופולריים
-            popular_products = self.product_metadata_df.nlargest(5, 'clicks')['pid'].tolist()
+            # חישוב פופולריות משוקללת על סמך כל המשתמשים (כמו למשתמשים ותיקים)
+            popular_products = self._get_popular_products(n=5)
             return popular_products
         
         # חישוב וקטור ממוצע של מוצרים מעניינים
@@ -1955,6 +1986,76 @@ class RecommendationSystem:
         recommendations = [idx + 1 for idx in top_indices if idx + 1 not in interested_products]
         
         return recommendations[:5]
+    
+    def _get_popular_products(self, n=5):
+        """
+        מחשב פופולריות משוקללת לכל המוצרים על סמך כל המשתמשים
+        
+        האלגוריתם:
+        - סוכם את כל האינטראקציות לכל מוצר מכל המשתמשים
+        - משתמש במשקלים: קליקים (1.0), רכישות (5.0), זמן צפייה (0.1)
+        - מחזיר את N המוצרים הכי פופולריים
+        
+        Parameters:
+        - n: מספר המוצרים הפופולריים להחזיר
+        
+        Returns:
+        - List of product_ids (המוצרים הכי פופולריים)
+        """
+        print(f"Calculating popularity scores for all products (based on all users)...")
+        
+        # משקלים (כמו ב-create_user_interaction_matrix)
+        weights = {
+            'clicks': 1.0,
+            'purchases': 5.0,
+            'visit_time': 0.1
+        }
+        
+        # חישוב ציון פופולריות משוקלל לכל מוצר
+        product_popularity_scores = {}
+        
+        # ספירת קליקים לכל מוצר
+        if self.clicks_df is not None and len(self.clicks_df) > 0:
+            clicks_by_product = self.clicks_df.groupby('product_id')['clicks'].sum()
+            for product_id, clicks_count in clicks_by_product.items():
+                if product_id not in product_popularity_scores:
+                    product_popularity_scores[product_id] = 0.0
+                product_popularity_scores[product_id] += clicks_count * weights['clicks']
+        
+        # ספירת רכישות לכל מוצר (יותר חשוב)
+        if self.purchases_df is not None and len(self.purchases_df) > 0:
+            purchases_by_product = self.purchases_df.groupby('product_id')['purchases'].sum()
+            for product_id, purchases_count in purchases_by_product.items():
+                if product_id not in product_popularity_scores:
+                    product_popularity_scores[product_id] = 0.0
+                product_popularity_scores[product_id] += purchases_count * weights['purchases']
+        
+        # ספירת זמן צפייה לכל מוצר
+        if self.visits_time_df is not None and len(self.visits_time_df) > 0:
+            visit_time_by_product = self.visits_time_df.groupby('product_id')['visit_time'].sum()
+            for product_id, visit_time_sum in visit_time_by_product.items():
+                if product_id not in product_popularity_scores:
+                    product_popularity_scores[product_id] = 0.0
+                product_popularity_scores[product_id] += visit_time_sum * weights['visit_time']
+        
+        if not product_popularity_scores:
+            # Fallback: אם אין נתונים, נשתמש בקובץ metadata אם קיים
+            if self.product_metadata_df is not None:
+                print("  No interaction data found, using metadata file as fallback...")
+                return self.product_metadata_df.nlargest(n, 'clicks')['pid'].tolist()
+            else:
+                print("  Warning: No interaction data and no metadata file available!")
+                return []
+        
+        # מיון לפי ציון פופולריות (גבוה לנמוך)
+        sorted_products = sorted(product_popularity_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # החזרת N המוצרים הכי פופולריים
+        popular_product_ids = [int(product_id) for product_id, score in sorted_products[:n]]
+        
+        print(f"  Found {len(popular_product_ids)} popular products (scores: {[f'{product_popularity_scores[pid]:.2f}' for pid in popular_product_ids]})")
+        
+        return popular_product_ids
     
     def recommend_for_old_user_collaborative(self, user_id, n_recommendations=5):
         """
@@ -2094,11 +2195,13 @@ class RecommendationSystem:
         for product_id in interested_products:
             product_row = self.products_df[self.products_df['id'] == product_id]
             if len(product_row) > 0:
-                # Use main_category if available, otherwise fall back to category
+                # Use main_category if available, otherwise fall back to category, then sub_category
                 if 'main_category' in product_row.columns:
                     category = product_row.iloc[0]['main_category']
                 elif 'category' in product_row.columns:
                     category = product_row.iloc[0]['category']
+                elif 'sub_category' in product_row.columns:
+                    category = product_row.iloc[0]['sub_category']
                 else:
                     continue
                 user_categories.append(category)
@@ -2118,6 +2221,8 @@ class RecommendationSystem:
                         user_purchased_categories.append(product_row.iloc[0]['main_category'])
                     elif 'category' in product_row.columns:
                         user_purchased_categories.append(product_row.iloc[0]['category'])
+                    elif 'sub_category' in product_row.columns:
+                        user_purchased_categories.append(product_row.iloc[0]['sub_category'])
         
         # העדפה חזקה לקטגוריות רכישה - אם יש רכישות, נשתמש רק בהן
         # שיפור: נוסיף גם קטגוריות מקליקים (אבל עם עדיפות נמוכה יותר)
@@ -2136,15 +2241,20 @@ class RecommendationSystem:
         category_scores = {}  # נשתמש בציונים כדי לדרג מוצרים
         
         for category in categories_to_use:
-            # Use main_category if available, otherwise fall back to category
+            # Use main_category if available, otherwise fall back to category, then sub_category
             if 'main_category' in self.products_df.columns:
                 category_products = self.products_df[
                     (self.products_df['main_category'] == category) &
                     (~self.products_df['id'].isin(interested_products))
                 ]
-            else:
+            elif 'category' in self.products_df.columns:
                 category_products = self.products_df[
                     (self.products_df['category'] == category) &
+                    (~self.products_df['id'].isin(interested_products))
+                ]
+            else:
+                category_products = self.products_df[
+                    (self.products_df['sub_category'] == category) &
                     (~self.products_df['id'].isin(interested_products))
                 ]
             
@@ -2199,9 +2309,15 @@ class RecommendationSystem:
                         (~self.products_df['id'].isin([p[0] for p in sorted_products])) &
                         (~self.products_df['id'].isin(interested_products))
                     ].sort_values('views', ascending=False).head(remaining_needed)
-                else:
+                elif 'category' in self.products_df.columns:
                     similar_category_products = self.products_df[
                         (self.products_df['category'] == category) &
+                        (~self.products_df['id'].isin([p[0] for p in sorted_products])) &
+                        (~self.products_df['id'].isin(interested_products))
+                    ].sort_values('views', ascending=False).head(remaining_needed)
+                else:
+                    similar_category_products = self.products_df[
+                        (self.products_df['sub_category'] == category) &
                         (~self.products_df['id'].isin([p[0] for p in sorted_products])) &
                         (~self.products_df['id'].isin(interested_products))
                     ].sort_values('views', ascending=False).head(remaining_needed)
@@ -2274,10 +2390,14 @@ class RecommendationSystem:
                 user_interactions[product_id] = 0
             user_interactions[product_id] += row['visit_time']
         
-        # ספירת אינטראקציות
-        total_interactions = sum(user_interactions.values())
+        # ספירת אינטראקציות - תיקון: סופרים את מספר המוצרים הייחודיים שהמשתמש התקשר איתם
+        # (לא את סכום הערכים, כי visit_time יכול להיות גדול מאוד)
+        num_unique_products = len(user_interactions)
+        # או לחלופין: ספירת כל השורות (כל אינטראקציה נפרדת)
+        total_interaction_count = len(user_clicks) + len(user_purchases) + len(user_visits)
         
-        if total_interactions < 3:  # משתמש חדש
+        # משתמש חדש = פחות מ-3 מוצרים ייחודיים או פחות מ-3 אינטראקציות
+        if num_unique_products < 3 or total_interaction_count < 3:  # משתמש חדש
             print("New user - using TF-IDF")
             return self.recommend_for_new_user(user_interactions)
         else:  # משתמש ותיק
@@ -2393,21 +2513,25 @@ class RecommendationSystem:
                 for rec_id in recommendations:
                     product_row = self.products_df[self.products_df['id'] == rec_id]
                     if len(product_row) > 0:
-                        # Use main_category if available, otherwise fall back to category
+                        # Use main_category if available, otherwise fall back to category, then sub_category
                         if 'main_category' in product_row.columns:
                             recommended_categories.append(product_row.iloc[0]['main_category'])
                         elif 'category' in product_row.columns:
                             recommended_categories.append(product_row.iloc[0]['category'])
+                        elif 'sub_category' in product_row.columns:
+                            recommended_categories.append(product_row.iloc[0]['sub_category'])
                 
                 purchased_categories = []
                 for pur_id in purchased_products:
                     product_row = self.products_df[self.products_df['id'] == pur_id]
                     if len(product_row) > 0:
-                        # Use main_category if available, otherwise fall back to category
+                        # Use main_category if available, otherwise fall back to category, then sub_category
                         if 'main_category' in product_row.columns:
                             purchased_categories.append(product_row.iloc[0]['main_category'])
                         elif 'category' in product_row.columns:
                             purchased_categories.append(product_row.iloc[0]['category'])
+                        elif 'sub_category' in product_row.columns:
+                            purchased_categories.append(product_row.iloc[0]['sub_category'])
                 
                 # Precision@K משופר - בודק גם לפי מוצרים ספציפיים וגם לפי קטגוריות
                 # 1. בדיקה לפי מוצרים ספציפיים (הכי מדויק)
@@ -2429,6 +2553,8 @@ class RecommendationSystem:
                                 rec_category = product_row.iloc[0]['main_category']
                             elif 'category' in product_row.columns:
                                 rec_category = product_row.iloc[0]['category']
+                            elif 'sub_category' in product_row.columns:
+                                rec_category = product_row.iloc[0]['sub_category']
                         
                         if rec_category and rec_category in purchased_categories:
                             matching_recommendations += 1
