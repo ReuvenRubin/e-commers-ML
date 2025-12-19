@@ -259,15 +259,24 @@ class UserCategorization:
             prices = []
             views = []
             categories = set()
+            # Category weights: main_category (3.0) > category (2.0) > sub_category (1.0)
+            category_weights = {
+                'main_category': 3.0,
+                'category': 2.0,
+                'sub_category': 1.0
+            }
             for product_id in user_products:
                 if product_id in products_dict:
                     product_data = products_dict[product_id]
                     prices.append(product_data['price'])
                     views.append(product_data['views'])
-                    # Get category (prefer main_category, fallback to category, then sub_category)
-                    cat = product_data['main_category'] or product_data['category'] or product_data['sub_category']
-                    if cat:
-                        categories.add(cat)
+                    # Add all available categories with their weights
+                    if product_data['main_category']:
+                        categories.add(product_data['main_category'])
+                    if product_data['category']:
+                        categories.add(product_data['category'])
+                    if product_data['sub_category']:
+                        categories.add(product_data['sub_category'])
             
             user_avg_price[user_id] = np.mean(prices) if prices else 0
             user_avg_views[user_id] = np.mean(views) if views else 0
@@ -295,8 +304,14 @@ class UserCategorization:
         else:
             days_since_registration = {}
         
-        # Get favorite category for each user
+        # Get favorite category for each user (with weighted categories)
         user_favorite_category = {}
+        # Category weights: main_category (3.0) > category (2.0) > sub_category (1.0)
+        category_weights = {
+            'main_category': 3.0,
+            'category': 2.0,
+            'sub_category': 1.0
+        }
         for user_id in all_users_with_interactions:
             user_categories = user_product_categories.get(user_id, set())
             if user_categories:
@@ -305,19 +320,42 @@ class UserCategorization:
                 user_click_products = clicks_products_by_user.get(user_id, set())
                 user_purchase_products = purchases_products_by_user.get(user_id, set())
                 
+                # Process clicks with weighted categories
                 for product_id in user_click_products:
                     if product_id in products_dict:
                         product_data = products_dict[product_id]
-                        cat = product_data['main_category'] or product_data['category'] or product_data['sub_category']
-                        if cat:
-                            category_interactions[cat] = category_interactions.get(cat, 0) + 1
+                        # Add all categories with their weights (main_category gets highest weight)
+                        if product_data['main_category']:
+                            cat = product_data['main_category']
+                            weight = category_weights['main_category']
+                            category_interactions[cat] = category_interactions.get(cat, 0) + (1 * weight)
+                        if product_data['category']:
+                            cat = product_data['category']
+                            weight = category_weights['category']
+                            category_interactions[cat] = category_interactions.get(cat, 0) + (1 * weight)
+                        if product_data['sub_category']:
+                            cat = product_data['sub_category']
+                            weight = category_weights['sub_category']
+                            category_interactions[cat] = category_interactions.get(cat, 0) + (1 * weight)
                 
+                # Process purchases with weighted categories (purchases get 2x base weight)
                 for product_id in user_purchase_products:
                     if product_id in products_dict:
                         product_data = products_dict[product_id]
-                        cat = product_data['main_category'] or product_data['category'] or product_data['sub_category']
-                        if cat:
-                            category_interactions[cat] = category_interactions.get(cat, 0) + 2
+                        # Add all categories with their weights (main_category gets highest weight)
+                        # Purchases get 2x the base weight (more important than clicks)
+                        if product_data['main_category']:
+                            cat = product_data['main_category']
+                            weight = category_weights['main_category']
+                            category_interactions[cat] = category_interactions.get(cat, 0) + (2 * weight)
+                        if product_data['category']:
+                            cat = product_data['category']
+                            weight = category_weights['category']
+                            category_interactions[cat] = category_interactions.get(cat, 0) + (2 * weight)
+                        if product_data['sub_category']:
+                            cat = product_data['sub_category']
+                            weight = category_weights['sub_category']
+                            category_interactions[cat] = category_interactions.get(cat, 0) + (2 * weight)
                 
                 if category_interactions:
                     user_favorite_category[user_id] = max(category_interactions, key=category_interactions.get)
